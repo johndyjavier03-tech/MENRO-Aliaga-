@@ -1,0 +1,1489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MENRO Aliaga — Waste Truck Monitoring System</title>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<!-- Leaflet Map -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+  :root {
+    --green-dark: #1a3a2a;
+    --green-mid: #2d6a4f;
+    --green-bright: #52b788;
+    --green-light: #b7e4c7;
+    --green-pale: #d8f3dc;
+    --accent: #f77f00;
+    --accent-light: #ffe8cc;
+    --gray-900: #0f1a14;
+    --gray-700: #2d3b35;
+    --gray-500: #5a7065;
+    --gray-300: #a8c5b5;
+    --gray-100: #eaf4ef;
+    --white: #f9fdf9;
+    --danger: #c0392b;
+    --danger-bg: #fdecea;
+    --warn: #d97706;
+    --warn-bg: #fef3c7;
+    --info: #1a6fa8;
+    --info-bg: #dbeafe;
+    --radius: 10px;
+    --radius-lg: 16px;
+    --shadow: 0 2px 12px rgba(0,0,0,0.10);
+    --shadow-lg: 0 6px 32px rgba(0,0,0,0.15);
+    --font: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font);
+    background: var(--gray-900);
+    color: var(--white);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ─── SCREENS ─── */
+  .screen { display: none; width: 100%; min-height: 100vh; flex-direction: column; }
+  .screen.active { display: flex; }
+
+  /* ─── LANDING ─── */
+  #screen-landing {
+    background: linear-gradient(135deg, #0f1a14 0%, #1a3a2a 60%, #2d6a4f 100%);
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    position: relative;
+    overflow: hidden;
+  }
+  #screen-landing::before {
+    content:'';
+    position: absolute;
+    width: 600px; height: 600px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(82,183,136,0.12) 0%, transparent 70%);
+    top: -100px; right: -100px;
+    pointer-events: none;
+  }
+  #screen-landing::after {
+    content:'';
+    position: absolute;
+    width: 400px; height: 400px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(247,127,0,0.08) 0%, transparent 70%);
+    bottom: -60px; left: -60px;
+    pointer-events: none;
+  }
+  .landing-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(82,183,136,0.2);
+    border-radius: 24px;
+    padding: 48px 40px;
+    max-width: 480px;
+    width: 92%;
+    text-align: center;
+    backdrop-filter: blur(8px);
+    position: relative;
+    z-index: 1;
+  }
+  .landing-logo {
+    width: 72px; height: 72px;
+    background: linear-gradient(135deg, var(--green-mid), var(--green-bright));
+    border-radius: 20px;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 24px;
+    font-size: 32px;
+  }
+  .landing-card h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--white);
+    line-height: 1.3;
+    margin-bottom: 6px;
+  }
+  .landing-card .subtitle {
+    font-size: 13px;
+    color: var(--gray-300);
+    margin-bottom: 36px;
+  }
+  .role-btn {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    padding: 16px 20px;
+    border-radius: var(--radius);
+    border: 1px solid rgba(82,183,136,0.25);
+    background: rgba(255,255,255,0.04);
+    color: var(--white);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-bottom: 12px;
+    text-align: left;
+  }
+  .role-btn:hover { background: rgba(82,183,136,0.15); border-color: var(--green-bright); transform: translateY(-1px); }
+  .role-btn .role-icon { font-size: 24px; flex-shrink: 0; }
+  .role-btn .role-sub { font-size: 12px; font-weight: 400; color: var(--gray-300); display: block; }
+  .badge-gov { background: rgba(247,127,0,0.15); border-color: rgba(247,127,0,0.35); }
+  .badge-gov:hover { background: rgba(247,127,0,0.25); border-color: var(--accent); }
+
+  /* ─── AUTH SCREENS ─── */
+  #screen-login, #screen-resident-auth {
+    background: linear-gradient(135deg, #0f1a14 0%, #1a3a2a 100%);
+    align-items: center;
+    justify-content: center;
+  }
+  .auth-card {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(82,183,136,0.2);
+    border-radius: 20px;
+    padding: 40px 36px;
+    width: 92%;
+    max-width: 400px;
+    backdrop-filter: blur(8px);
+  }
+  .auth-card h2 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+  .auth-card p { font-size: 13px; color: var(--gray-300); margin-bottom: 28px; }
+  .field { margin-bottom: 18px; }
+  .field label { display: block; font-size: 12px; font-weight: 600; color: var(--gray-300); margin-bottom: 6px; letter-spacing: 0.5px; text-transform: uppercase; }
+  .field input {
+    width: 100%;
+    padding: 11px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(82,183,136,0.25);
+    background: rgba(255,255,255,0.06);
+    color: var(--white);
+    font-size: 15px;
+    font-family: var(--font);
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .field input:focus { border-color: var(--green-bright); }
+  .field input::placeholder { color: var(--gray-500); }
+  .btn-primary {
+    width: 100%;
+    padding: 13px;
+    border-radius: 8px;
+    background: var(--green-mid);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+    margin-top: 4px;
+  }
+  .btn-primary:hover { background: var(--green-bright); }
+  .btn-primary:active { transform: scale(0.98); }
+  .btn-back {
+    background: none;
+    border: none;
+    color: var(--gray-300);
+    font-size: 13px;
+    cursor: pointer;
+    margin-top: 18px;
+    display: flex; align-items: center; gap: 6px;
+    padding: 0;
+  }
+  .btn-back:hover { color: var(--white); }
+  .error-msg { background: var(--danger-bg); color: var(--danger); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 14px; display: none; }
+
+  /* ─── TOP BAR ─── */
+  .topbar {
+    height: 58px;
+    background: rgba(15,26,20,0.95);
+    border-bottom: 1px solid rgba(82,183,136,0.18);
+    display: flex; align-items: center;
+    padding: 0 20px;
+    gap: 14px;
+    flex-shrink: 0;
+    backdrop-filter: blur(6px);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .topbar-logo { font-size: 20px; }
+  .topbar-title { font-size: 15px; font-weight: 700; color: var(--white); }
+  .topbar-subtitle { font-size: 11px; color: var(--gray-300); }
+  .topbar-spacer { flex: 1; }
+  .topbar-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--gray-300); }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green-bright); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+  .topbar-logout { background: none; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: var(--gray-300); font-size: 12px; padding: 5px 12px; cursor: pointer; transition: all 0.2s; }
+  .topbar-logout:hover { background: rgba(255,255,255,0.08); color: var(--white); }
+
+  /* ─── ADMIN SCREEN ─── */
+  #screen-admin { background: #0f1a14; }
+  .admin-layout { display: grid; grid-template-columns: 260px 1fr; flex: 1; min-height: 0; }
+
+  /* Sidebar */
+  .sidebar {
+    background: rgba(26,58,42,0.7);
+    border-right: 1px solid rgba(82,183,136,0.15);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+  .sidebar-nav { padding: 16px 12px; flex: 1; }
+  .nav-section { font-size: 10px; font-weight: 700; color: var(--gray-500); letter-spacing: 1px; text-transform: uppercase; margin: 18px 0 8px 8px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--gray-300);
+    transition: all 0.15s;
+    margin-bottom: 2px;
+    border: 1px solid transparent;
+  }
+  .nav-item:hover { background: rgba(82,183,136,0.1); color: var(--white); }
+  .nav-item.active { background: rgba(82,183,136,0.18); color: var(--green-bright); border-color: rgba(82,183,136,0.2); }
+  .nav-item .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+  /* Admin Panels */
+  .admin-main { overflow-y: auto; }
+  .admin-panel { display: none; padding: 24px; }
+  .admin-panel.active { display: block; }
+  .panel-header { margin-bottom: 20px; }
+  .panel-header h2 { font-size: 20px; font-weight: 700; }
+  .panel-header p { font-size: 13px; color: var(--gray-300); margin-top: 4px; }
+
+  /* Cards */
+  .cards-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .stat-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(82,183,136,0.15);
+    border-radius: var(--radius);
+    padding: 18px;
+  }
+  .stat-card .sc-label { font-size: 11px; color: var(--gray-300); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .stat-card .sc-value { font-size: 26px; font-weight: 700; color: var(--white); }
+  .stat-card .sc-sub { font-size: 12px; color: var(--green-bright); margin-top: 4px; }
+
+  /* Map */
+  #map, #map-resident { width: 100%; border-radius: var(--radius); border: 1px solid rgba(82,183,136,0.2); }
+  #map { height: 400px; }
+  #map-resident { height: calc(100vh - 120px); }
+
+  .map-container { position: relative; margin-bottom: 20px; }
+  .map-legend {
+    position: absolute; bottom: 12px; left: 12px; z-index: 999;
+    background: rgba(15,26,20,0.92);
+    border: 1px solid rgba(82,183,136,0.2);
+    border-radius: 8px; padding: 10px 14px;
+    font-size: 12px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  /* Tables */
+  .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .data-table th { text-align: left; font-size: 11px; font-weight: 600; color: var(--gray-300); text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 12px; border-bottom: 1px solid rgba(82,183,136,0.15); }
+  .data-table td { padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--white); vertical-align: middle; }
+  .data-table tr:last-child td { border-bottom: none; }
+  .data-table tr:hover td { background: rgba(82,183,136,0.06); }
+  .table-wrap { background: rgba(255,255,255,0.03); border: 1px solid rgba(82,183,136,0.15); border-radius: var(--radius); overflow: hidden; margin-bottom: 20px; }
+
+  /* Badges */
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge-green { background: rgba(82,183,136,0.15); color: var(--green-bright); }
+  .badge-orange { background: rgba(247,127,0,0.15); color: var(--accent); }
+  .badge-red { background: var(--danger-bg); color: var(--danger); }
+  .badge-blue { background: var(--info-bg); color: var(--info); }
+
+  /* SIM Load Bars */
+  .sim-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(82,183,136,0.15);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .sim-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .sim-name { font-size: 14px; font-weight: 600; }
+  .sim-meta { font-size: 12px; color: var(--gray-300); }
+  .load-bar-bg { background: rgba(255,255,255,0.08); border-radius: 4px; height: 8px; overflow: hidden; margin-bottom: 8px; }
+  .load-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+  .load-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--gray-300); }
+  .load-val { font-weight: 600; color: var(--white); }
+
+  /* Code generator */
+  .code-area {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(82,183,136,0.15);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .code-area h3 { font-size: 15px; font-weight: 700; margin-bottom: 14px; }
+  .code-gen-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+  .form-field label { font-size: 11px; font-weight: 600; color: var(--gray-300); display: block; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.4px; }
+  .form-field input, .form-field select {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 7px;
+    border: 1px solid rgba(82,183,136,0.2);
+    background: rgba(255,255,255,0.05);
+    color: var(--white);
+    font-size: 13px;
+    font-family: var(--font);
+    outline: none;
+  }
+  .form-field input:focus, .form-field select:focus { border-color: var(--green-bright); }
+  .form-field select option { background: #1a3a2a; }
+  .btn-gen {
+    padding: 9px 18px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s;
+  }
+  .btn-gen:hover { background: #e67200; }
+  .btn-small {
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+  }
+  .btn-danger { background: var(--danger-bg); color: var(--danger); }
+  .btn-danger:hover { background: var(--danger); color: #fff; }
+
+  /* Truck list */
+  .truck-row { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .truck-row:last-child { border-bottom: none; }
+  .truck-avatar { width: 40px; height: 40px; border-radius: 10px; background: rgba(82,183,136,0.15); display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+  .truck-info { flex: 1; }
+  .truck-name { font-size: 14px; font-weight: 600; }
+  .truck-detail { font-size: 12px; color: var(--gray-300); }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+    background: var(--green-mid);
+    color: #fff;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: var(--shadow-lg);
+    transform: translateY(80px);
+    opacity: 0;
+    transition: all 0.3s;
+    pointer-events: none;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+
+  /* Resident Screen */
+  #screen-resident { background: #0f1a14; }
+  .resident-topbar { background: rgba(15,26,20,0.95); border-bottom: 1px solid rgba(82,183,136,0.18); padding: 12px 20px; display: flex; align-items: center; gap: 14px; }
+  .resident-content { flex: 1; display: flex; flex-direction: column; }
+  .resident-info-bar { background: rgba(26,58,42,0.5); border-bottom: 1px solid rgba(82,183,136,0.12); padding: 10px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+  .info-chip { display: flex; align-items: center; gap: 6px; color: var(--gray-300); }
+  .info-chip strong { color: var(--white); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(82,183,136,0.3); border-radius: 4px; }
+
+  /* Config modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 500; display: none; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: #1a3a2a;
+    border: 1px solid rgba(82,183,136,0.25);
+    border-radius: 16px;
+    padding: 32px;
+    width: 92%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .modal-box h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  .modal-box p { font-size: 13px; color: var(--gray-300); margin-bottom: 24px; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+  .btn-secondary { padding: 10px 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: transparent; color: var(--white); font-size: 14px; cursor: pointer; transition: all 0.2s; }
+  .btn-secondary:hover { background: rgba(255,255,255,0.08); }
+
+  @media (max-width: 768px) {
+    .admin-layout { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    .code-gen-form { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════ -->
+<!--  LANDING SCREEN                            -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="screen-landing" class="screen active">
+  <div class="landing-card">
+    <div class="landing-logo">🚛</div>
+    <h1>MENRO Aliaga<br/>Waste Truck Monitoring</h1>
+    <p class="subtitle">Municipality of Aliaga, Nueva Ecija · Real-time GPS Tracking System</p>
+
+    <button class="role-btn badge-gov" onclick="showScreen('screen-login')">
+      <span class="role-icon">🏛️</span>
+      <span>
+        Admin / MENRO Office
+        <span class="role-sub">Staff and government officials login</span>
+      </span>
+    </button>
+
+    <button class="role-btn" onclick="showScreen('screen-resident-auth')">
+      <span class="role-icon">🏠</span>
+      <span>
+        Resident Access
+        <span class="role-sub">Enter your one-time access code</span>
+      </span>
+    </button>
+
+    <p style="font-size:11px;color:var(--gray-500);margin-top:18px;">
+      Powered by GeoLinker GPS · Firebase Cloud · Arduino ESP SIM
+    </p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!--  ADMIN LOGIN                               -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="screen-login" class="screen">
+  <div class="auth-card" style="margin:auto;">
+    <div style="font-size:28px;margin-bottom:14px;">🏛️</div>
+    <h2>MENRO Admin Login</h2>
+    <p>Office of the Municipal Environment and Natural Resources Officer — Aliaga, Nueva Ecija</p>
+    <div id="login-error" class="error-msg">Invalid email or password.</div>
+    <div class="field">
+      <label>Email Address</label>
+      <input type="email" id="login-email" placeholder="admin@menro-aliaga.gov.ph" />
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="login-pass" placeholder="••••••••" />
+    </div>
+    <button class="btn-primary" onclick="adminLogin()">Sign In to Dashboard</button>
+    <br/>
+    <button class="btn-back" onclick="showScreen('screen-landing')">← Back to Home</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!--  RESIDENT AUTH                             -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="screen-resident-auth" class="screen">
+  <div class="auth-card" style="margin:auto;">
+    <div style="font-size:28px;margin-bottom:14px;">🏠</div>
+    <h2>Resident Access</h2>
+    <p>Enter the one-time access code issued by the MENRO Aliaga office to view live truck locations.</p>
+    <div id="resident-error" class="error-msg">Invalid or expired access code.</div>
+    <div class="field">
+      <label>Access Code</label>
+      <input type="text" id="resident-code" placeholder="e.g. ALG-X8K2-7P" maxlength="14" style="font-family:monospace;letter-spacing:2px;font-size:18px;text-transform:uppercase;" oninput="this.value=this.value.toUpperCase()" />
+    </div>
+    <div class="field">
+      <label>Your Name</label>
+      <input type="text" id="resident-name" placeholder="Juan dela Cruz" />
+    </div>
+    <button class="btn-primary" onclick="residentLogin()">View Live Map</button>
+    <br/>
+    <button class="btn-back" onclick="showScreen('screen-landing')">← Back to Home</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!--  ADMIN DASHBOARD                           -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="screen-admin" class="screen">
+  <!-- Topbar -->
+  <div class="topbar">
+    <span class="topbar-logo">🚛</span>
+    <div>
+      <div class="topbar-title">MENRO Aliaga — Admin Dashboard</div>
+      <div class="topbar-subtitle">Waste Truck Monitoring System</div>
+    </div>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-status">
+      <div class="status-dot"></div>
+      GeoLinker Live
+    </div>
+    <button class="topbar-logout" onclick="logout()">Logout</button>
+  </div>
+
+  <div class="admin-layout">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-nav">
+        <div class="nav-section">Monitoring</div>
+        <div class="nav-item active" onclick="showPanel('panel-map',this)">
+          <span class="nav-icon">🗺️</span> Live Map
+        </div>
+        <div class="nav-item" onclick="showPanel('panel-trucks',this)">
+          <span class="nav-icon">🚛</span> Fleet Status
+        </div>
+        <div class="nav-section">SIM Management</div>
+        <div class="nav-item" onclick="showPanel('panel-sim',this)">
+          <span class="nav-icon">📡</span> SIM Load Monitor
+        </div>
+        <div class="nav-section">Access Control</div>
+        <div class="nav-item" onclick="showPanel('panel-codes',this)">
+          <span class="nav-icon">🔑</span> Resident Codes
+        </div>
+        <div class="nav-item" onclick="showPanel('panel-logs',this)">
+          <span class="nav-icon">📋</span> Access Logs
+        </div>
+        <div class="nav-section">Settings</div>
+        <div class="nav-item" onclick="showPanel('panel-config',this)">
+          <span class="nav-icon">⚙️</span> API Config
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="admin-main">
+
+      <!-- ── LIVE MAP PANEL ── -->
+      <div id="panel-map" class="admin-panel active">
+        <div class="panel-header">
+          <h2>Live Truck Locations</h2>
+          <p>Real-time GPS positions via GeoLinker API · Updates every 10 seconds</p>
+        </div>
+        <div class="cards-row">
+          <div class="stat-card">
+            <div class="sc-label">Active Trucks</div>
+            <div class="sc-value" id="stat-active">—</div>
+            <div class="sc-sub">Online now</div>
+          </div>
+          <div class="stat-card">
+            <div class="sc-label">Offline</div>
+            <div class="sc-value" id="stat-offline">—</div>
+            <div class="sc-sub">No signal</div>
+          </div>
+          <div class="stat-card">
+            <div class="sc-label">Last Update</div>
+            <div class="sc-value" id="stat-lastupdate" style="font-size:16px;">—</div>
+            <div class="sc-sub">GeoLinker sync</div>
+          </div>
+          <div class="stat-card">
+            <div class="sc-label">Total Fleet</div>
+            <div class="sc-value" id="stat-fleet">—</div>
+            <div class="sc-sub">Registered units</div>
+          </div>
+        </div>
+        <div class="map-container">
+          <div id="map"></div>
+          <div class="map-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#52b788;"></div> Active Truck</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#f77f00;"></div> En Route</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#888;"></div> Offline</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── FLEET STATUS PANEL ── -->
+      <div id="panel-trucks" class="admin-panel">
+        <div class="panel-header">
+          <h2>Fleet Status</h2>
+          <p>All registered waste trucks and their current status</p>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Truck</th>
+                <th>Plate / ID</th>
+                <th>Driver</th>
+                <th>Status</th>
+                <th>Speed</th>
+                <th>Last Seen</th>
+                <th>SIM</th>
+              </tr>
+            </thead>
+            <tbody id="fleet-table-body">
+              <tr><td colspan="7" style="text-align:center;color:var(--gray-300);padding:30px;">Loading fleet data…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── SIM LOAD MONITOR PANEL ── -->
+      <div id="panel-sim" class="admin-panel">
+        <div class="panel-header">
+          <h2>SIM Card Load Monitor</h2>
+          <p>Track remaining data balance for each ESP module's SIM card. Configure via Settings → API Config.</p>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:18px;">
+          <button class="btn-gen" onclick="refreshSimData()" style="background:var(--green-mid);">↻ Refresh Balances</button>
+          <button class="btn-gen" onclick="openAddSimModal()" style="background:transparent;border:1px solid var(--accent);color:var(--accent);">+ Add SIM</button>
+        </div>
+        <div id="sim-cards-container">
+          <!-- Dynamically rendered -->
+        </div>
+      </div>
+
+      <!-- ── RESIDENT CODES PANEL ── -->
+      <div id="panel-codes" class="admin-panel">
+        <div class="panel-header">
+          <h2>Resident Access Codes</h2>
+          <p>Generate and manage one-time access codes for residents to view the live map.</p>
+        </div>
+        <div class="code-area">
+          <h3>Generate New Code</h3>
+          <div class="code-gen-form">
+            <div class="form-field">
+              <label>Resident Name</label>
+              <input type="text" id="gen-name" placeholder="Juan dela Cruz" />
+            </div>
+            <div class="form-field">
+              <label>Barangay</label>
+              <select id="gen-brgy">
+                <option>Barangay I (Poblacion)</option>
+                <option>Barangay II</option>
+                <option>Barangay III</option>
+                <option>Barangay IV</option>
+                <option>Baloc</option>
+                <option>Bued</option>
+                <option>Caaringayan</option>
+                <option>Cabilcalan</option>
+                <option>Cabisuculan</option>
+                <option>Cabubulaonan</option>
+                <option>Cacapasan</option>
+                <option>Calaanan</option>
+                <option>Camiling</option>
+                <option>Ilog-Ilog</option>
+                <option>Kita-Kita</option>
+                <option>Malbeg-Patlan</option>
+                <option>Malineng</option>
+                <option>Minabang</option>
+                <option>Mitlag</option>
+                <option>Naglabrahan</option>
+              </select>
+            </div>
+            <button class="btn-gen" onclick="generateCode()">Generate Code</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Resident</th>
+                <th>Barangay</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Used</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="codes-table-body">
+              <tr><td colspan="7" style="text-align:center;color:var(--gray-300);padding:30px;">No codes generated yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── ACCESS LOGS PANEL ── -->
+      <div id="panel-logs" class="admin-panel">
+        <div class="panel-header">
+          <h2>Access Logs</h2>
+          <p>History of resident logins and code usage</p>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr><th>Timestamp</th><th>Name</th><th>Code Used</th><th>Barangay</th><th>Status</th></tr>
+            </thead>
+            <tbody id="logs-table-body">
+              <tr><td colspan="5" style="text-align:center;color:var(--gray-300);padding:30px;">No logs yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── API CONFIG PANEL ── -->
+      <div id="panel-config" class="admin-panel">
+        <div class="panel-header">
+          <h2>System Configuration</h2>
+          <p>Configure GeoLinker API key, Firebase credentials, and SIM card provider APIs.</p>
+        </div>
+        <div class="code-area" style="margin-bottom:16px;">
+          <h3>🔗 GeoLinker API Settings</h3>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;">
+            <div class="form-field">
+              <label>API Key</label>
+              <input type="password" id="cfg-apikey" placeholder="Your GeoLinker API Key" />
+            </div>
+            <div class="form-field">
+              <label>Fleet / Group ID</label>
+              <input type="text" id="cfg-fleetid" placeholder="fleet_xxxxxxxx" />
+            </div>
+            <div class="form-field">
+              <label>API Base URL</label>
+              <input type="text" id="cfg-baseurl" placeholder="https://api.geolinker.io/v1" />
+            </div>
+            <div class="form-field">
+              <label>Polling Interval (sec)</label>
+              <input type="number" id="cfg-interval" placeholder="10" min="5" max="120" />
+            </div>
+          </div>
+          <button class="btn-gen" style="margin-top:14px;" onclick="saveConfig()">Save GeoLinker Config</button>
+        </div>
+        <div class="code-area" style="margin-bottom:16px;">
+          <h3>🔥 Firebase Configuration</h3>
+          <p style="font-size:12px;color:var(--gray-300);margin:8px 0 14px;">Paste your Firebase project config here. This is stored in local storage and used to initialize the SDK.</p>
+          <div class="form-field" style="margin-bottom:14px;">
+            <label>Firebase Config JSON</label>
+            <textarea id="cfg-firebase" rows="6" placeholder='{"apiKey":"...","authDomain":"...","projectId":"...",...}' style="width:100%;padding:10px 12px;border-radius:7px;border:1px solid rgba(82,183,136,0.2);background:rgba(255,255,255,0.05);color:var(--white);font-size:12px;font-family:monospace;resize:vertical;outline:none;"></textarea>
+          </div>
+          <button class="btn-gen" onclick="saveFirebaseConfig()">Save & Reinitialize Firebase</button>
+        </div>
+        <div class="code-area">
+          <h3>📡 SIM Card Provider Connections</h3>
+          <p style="font-size:12px;color:var(--gray-300);margin:8px 0 14px;">Connect to your SIM load monitoring API. Supported: Smart, Globe, DITO (via partner API), or custom HTTP endpoint.</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div class="form-field">
+              <label>Provider</label>
+              <select id="cfg-provider">
+                <option>Smart/TNT</option>
+                <option>Globe/TM</option>
+                <option>DITO</option>
+                <option>Custom API</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label>API Endpoint</label>
+              <input type="text" id="cfg-simapi" placeholder="https://api.provider.com/balance" />
+            </div>
+            <div class="form-field">
+              <label>Auth Token</label>
+              <input type="password" id="cfg-simtoken" placeholder="Bearer token" />
+            </div>
+          </div>
+          <button class="btn-gen" style="margin-top:14px;" onclick="saveSimConfig()">Save SIM Config</button>
+        </div>
+      </div>
+
+    </div><!-- /admin-main -->
+  </div><!-- /admin-layout -->
+</div><!-- /screen-admin -->
+
+<!-- ═══════════════════════════════════════════ -->
+<!--  RESIDENT MAP SCREEN                       -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="screen-resident" class="screen">
+  <div class="topbar">
+    <span class="topbar-logo">🚛</span>
+    <div>
+      <div class="topbar-title">Aliaga Waste Truck Tracker</div>
+      <div class="topbar-subtitle">Live map for residents</div>
+    </div>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-status"><div class="status-dot"></div>Live</div>
+    <button class="topbar-logout" onclick="residentLogout()">Exit</button>
+  </div>
+  <div class="resident-info-bar">
+    <div class="info-chip">👤 Welcome, <strong id="resident-welcome-name">—</strong></div>
+    <div class="info-chip">🏘️ <strong id="resident-brgy">—</strong></div>
+    <div class="info-chip">🔑 Code: <strong id="resident-code-display">—</strong></div>
+    <div class="info-chip">🟢 <strong id="resident-truck-count">—</strong> trucks active</div>
+  </div>
+  <div style="flex:1;padding:16px;">
+    <div id="map-resident"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!--  ADD SIM MODAL                             -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-add-sim">
+  <div class="modal-box">
+    <h3>Add SIM Card / ESP Module</h3>
+    <p>Register a new SIM card connected to an Arduino ESP module for load monitoring.</p>
+    <div class="field">
+      <label>Module Name</label>
+      <input type="text" id="sim-module-name" placeholder="e.g. Truck 1 — ESP32" />
+    </div>
+    <div class="field">
+      <label>SIM Number (MSISDN)</label>
+      <input type="text" id="sim-number" placeholder="09XXXXXXXXX" />
+    </div>
+    <div class="field">
+      <label>Provider</label>
+      <select id="sim-provider-add" style="width:100%;padding:11px 14px;border-radius:8px;border:1px solid rgba(82,183,136,0.25);background:rgba(255,255,255,0.06);color:var(--white);font-size:15px;font-family:var(--font);">
+        <option>Smart/TNT</option>
+        <option>Globe/TM</option>
+        <option>DITO</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Data Limit (MB)</label>
+      <input type="number" id="sim-data-limit" placeholder="1000" />
+    </div>
+    <div class="field">
+      <label>Alert Threshold (%)</label>
+      <input type="number" id="sim-alert-threshold" placeholder="20" min="5" max="50" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('modal-add-sim')">Cancel</button>
+      <button class="btn-primary" style="width:auto;padding:10px 24px;" onclick="addSimCard()">Add SIM Card</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ─────────────────────────────────────────
+//  FIREBASE CONFIG (replace with yours)
+// ─────────────────────────────────────────
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCtgW-oXTpixmlazMPQfqEWDm0RpTsnGmg",
+  authDomain: "menro-aliaga-wtms.firebaseapp.com",
+  projectId: "menro-aliaga-wtms",
+  storageBucket: "menro-aliaga-wtms.firebasestorage.app",
+  messagingSenderId: "83109134250",
+  appId: "1:83109134250:web:36d22d66b6abab02e775d3",
+  measurementId: "G-PW76C6QB5F"
+};
+
+// GeoLinker config (set via Settings panel or replace here)
+let GEOLINKER_CONFIG = {
+  apiKey: localStorage.getItem('gl_apikey') || '',
+  fleetId: localStorage.getItem('gl_fleetid') || '',
+  baseUrl: localStorage.getItem('gl_baseurl') || 'https://api.geolinker.io/v1',
+  interval: parseInt(localStorage.getItem('gl_interval') || '10')
+};
+
+// ─────────────────────────────────────────
+//  FIREBASE INIT
+// ─────────────────────────────────────────
+let db, auth, firebaseReady = false;
+
+function initFirebase(cfg) {
+  try {
+    if (firebase.apps.length) firebase.app().delete();
+    firebase.initializeApp(cfg);
+    db = firebase.firestore();
+    auth = firebase.auth();
+    firebaseReady = true;
+    console.log('[Firebase] Initialized');
+  } catch(e) {
+    console.warn('[Firebase] Init failed:', e.message);
+  }
+}
+
+// Try saved config first
+const savedFbCfg = localStorage.getItem('firebase_config');
+if (savedFbCfg) {
+  try { initFirebase(JSON.parse(savedFbCfg)); } catch(e) {}
+} else {
+  initFirebase(FIREBASE_CONFIG);
+}
+
+// ─────────────────────────────────────────
+//  SCREEN NAVIGATION
+// ─────────────────────────────────────────
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if (id === 'screen-admin') { setTimeout(initAdminMap, 200); }
+  if (id === 'screen-resident') { setTimeout(initResidentMap, 200); }
+}
+
+function showPanel(panelId, navEl) {
+  document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById(panelId).classList.add('active');
+  if (navEl) navEl.classList.add('active');
+  if (panelId === 'panel-map' && !adminMapInit) { setTimeout(initAdminMap, 100); }
+  if (panelId === 'panel-sim') renderSimCards();
+  if (panelId === 'panel-codes') renderCodesTable();
+  if (panelId === 'panel-logs') renderLogsTable();
+  if (panelId === 'panel-config') prefillConfig();
+}
+
+// ─────────────────────────────────────────
+//  AUTH
+// ─────────────────────────────────────────
+function adminLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  const err   = document.getElementById('login-error');
+  err.style.display = 'none';
+
+  if (!email || !pass) { err.textContent = 'Please enter email and password.'; err.style.display = 'block'; return; }
+
+  if (firebaseReady) {
+    auth.signInWithEmailAndPassword(email, pass)
+      .then(() => { showScreen('screen-admin'); loadFleetData(); startGeoLinkerPolling(); })
+      .catch(e => {
+        // Demo fallback if Firebase not configured
+        if (email === 'admin@menro-aliaga.gov.ph' && pass === 'menro2024') {
+          showScreen('screen-admin'); loadFleetData(); startGeoLinkerPolling();
+        } else {
+          err.textContent = 'Invalid credentials. ' + (e.code === 'auth/network-request-failed' ? 'Using demo login.' : '');
+          err.style.display = 'block';
+        }
+      });
+  } else {
+    // Demo mode
+    if (email.includes('@') && pass.length >= 4) {
+      showScreen('screen-admin'); loadFleetData(); startGeoLinkerPolling();
+    } else {
+      err.textContent = 'Demo mode: Use any valid email and 4+ char password.';
+      err.style.display = 'block';
+    }
+  }
+}
+
+let currentResidentData = null;
+
+async function residentLogin() {
+  const code = document.getElementById('resident-code').value.trim().toUpperCase();
+  const name = document.getElementById('resident-name').value.trim();
+  const err  = document.getElementById('resident-error');
+  err.style.display = 'none';
+
+  if (!code || !name) { err.textContent = 'Please enter code and your name.'; err.style.display = 'block'; return; }
+
+  // Check Firestore
+  let found = null;
+  if (firebaseReady) {
+    try {
+      const snap = await db.collection('access_codes').where('code','==',code).where('status','==','active').limit(1).get();
+      if (!snap.empty) found = { id: snap.docs[0].id, ...snap.docs[0].data() };
+    } catch(e) { console.warn('Firestore query failed, using demo mode'); }
+  }
+
+  // Demo fallback
+  const localCodes = JSON.parse(localStorage.getItem('resident_codes') || '[]');
+  if (!found) found = localCodes.find(c => c.code === code && c.status === 'active');
+
+  if (!found) {
+    err.textContent = 'Invalid or expired access code. Contact the MENRO office.';
+    err.style.display = 'block';
+    return;
+  }
+
+  // Log access
+  const logEntry = { name, code, barangay: found.barangay, timestamp: new Date().toISOString(), status: 'success' };
+  const logs = JSON.parse(localStorage.getItem('access_logs') || '[]');
+  logs.unshift(logEntry);
+  localStorage.setItem('access_logs', JSON.stringify(logs));
+
+  if (firebaseReady) {
+    try { await db.collection('access_logs').add(logEntry); } catch(e){}
+    try { await db.collection('access_codes').doc(found.id).update({ used: true, usedAt: new Date().toISOString(), usedBy: name }); } catch(e){}
+  }
+
+  // Mark used locally
+  const updatedCodes = localCodes.map(c => c.code === code ? { ...c, used: true, usedBy: name } : c);
+  localStorage.setItem('resident_codes', JSON.stringify(updatedCodes));
+
+  currentResidentData = { name, code, barangay: found.barangay };
+  document.getElementById('resident-welcome-name').textContent = name;
+  document.getElementById('resident-brgy').textContent = found.barangay;
+  document.getElementById('resident-code-display').textContent = code;
+
+  showScreen('screen-resident');
+  startGeoLinkerPolling(true);
+}
+
+function logout() {
+  if (firebaseReady) auth.signOut().catch(()=>{});
+  clearInterval(pollingInterval);
+  showScreen('screen-landing');
+}
+
+function residentLogout() {
+  clearInterval(pollingInterval);
+  showScreen('screen-landing');
+}
+
+// ─────────────────────────────────────────
+//  GEOLINKER API INTEGRATION
+// ─────────────────────────────────────────
+/*
+  GeoLinker REST API — typical endpoints:
+  GET /v1/fleet/{fleetId}/assets         → list all devices
+  GET /v1/assets/{assetId}/location      → latest position
+  GET /v1/fleet/{fleetId}/locations      → all latest positions (batch)
+
+  Response shape (adapt to your actual GeoLinker API response):
+  {
+    assets: [
+      { id, name, lat, lng, speed, heading, timestamp, status }
+    ]
+  }
+*/
+
+let pollingInterval = null;
+let adminMapInit = false;
+let adminMap, residentMap;
+let adminMarkers = {};
+let residentMarkers = {};
+
+// Demo/fallback truck data (simulates Aliaga municipality area)
+function getDemoTrucks() {
+  const base = { lat: 15.4925, lng: 120.8475 };
+  const trucks = [
+    { id:'T001', name:'Truck 1 — Barangay I', plate:'NEC-8814', driver:'Pedro Santos', status:'active', sim:'SIM-001', speed: 18 },
+    { id:'T002', name:'Truck 2 — Bued Route', plate:'NEC-7723', driver:'Ramon Flores', status:'active', sim:'SIM-002', speed: 22 },
+    { id:'T003', name:'Truck 3 — Baloc', plate:'NEC-5591', driver:'Jose Reyes', status:'enroute', sim:'SIM-003', speed: 35 },
+    { id:'T004', name:'Truck 4 — Camiling', plate:'NEC-3302', driver:'Dante Cruz', status:'offline', sim:'SIM-004', speed: 0 },
+  ];
+  return trucks.map((t, i) => ({
+    ...t,
+    lat: base.lat + (Math.random()-0.5)*0.05 + (i*0.008),
+    lng: base.lng + (Math.random()-0.5)*0.05 + (i*0.006),
+    timestamp: new Date().toISOString(),
+    lastSeen: `${Math.floor(Math.random()*5)+1} min ago`
+  }));
+}
+
+let currentTrucks = getDemoTrucks();
+
+async function fetchGeoLinkerData() {
+  if (!GEOLINKER_CONFIG.apiKey || !GEOLINKER_CONFIG.fleetId) {
+    // Animate demo truck positions
+    currentTrucks = currentTrucks.map(t => ({
+      ...t,
+      lat: t.status !== 'offline' ? t.lat + (Math.random()-0.5)*0.0006 : t.lat,
+      lng: t.status !== 'offline' ? t.lng + (Math.random()-0.5)*0.0006 : t.lng,
+      speed: t.status !== 'offline' ? Math.round(Math.random()*40+5) : 0,
+      timestamp: new Date().toISOString(),
+      lastSeen: 'Just now'
+    }));
+    return currentTrucks;
+  }
+
+  try {
+    const res = await fetch(`${GEOLINKER_CONFIG.baseUrl}/fleet/${GEOLINKER_CONFIG.fleetId}/locations`, {
+      headers: {
+        'Authorization': `Bearer ${GEOLINKER_CONFIG.apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    // Adapt to GeoLinker's actual response shape — adjust field names as needed
+    currentTrucks = (data.assets || data.data || []).map(a => ({
+      id: a.id || a.assetId,
+      name: a.name || a.label,
+      plate: a.plate || a.registration || '',
+      driver: a.driver || a.driverName || '',
+      status: a.status === 'moving' ? 'active' : a.status || 'offline',
+      sim: a.simId || '',
+      lat: a.lat || a.latitude,
+      lng: a.lng || a.longitude,
+      speed: a.speed || 0,
+      heading: a.heading || a.course || 0,
+      timestamp: a.timestamp || a.updatedAt,
+      lastSeen: 'Just now'
+    }));
+    return currentTrucks;
+  } catch(e) {
+    console.warn('[GeoLinker] Fetch failed, using demo data:', e.message);
+    return getDemoTrucks();
+  }
+}
+
+function startGeoLinkerPolling(residentOnly = false) {
+  clearInterval(pollingInterval);
+  async function tick() {
+    const trucks = await fetchGeoLinkerData();
+    updateMapMarkers(trucks, residentOnly);
+    if (!residentOnly) updateDashboardStats(trucks);
+    updateFleetTable(trucks);
+    document.getElementById('stat-lastupdate').textContent = new Date().toLocaleTimeString('en-PH');
+  }
+  tick();
+  pollingInterval = setInterval(tick, (GEOLINKER_CONFIG.interval || 10) * 1000);
+}
+
+// ─────────────────────────────────────────
+//  MAP INIT & MARKERS
+// ─────────────────────────────────────────
+function makeTruckIcon(status) {
+  const color = status === 'active' ? '#52b788' : status === 'enroute' ? '#f77f00' : '#888';
+  return L.divIcon({
+    html: `<div style="width:36px;height:36px;border-radius:50%;background:${color};border:3px solid white;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 2px 8px rgba(0,0,0,0.4);">🚛</div>`,
+    className: '',
+    iconSize: [36,36],
+    iconAnchor: [18,18]
+  });
+}
+
+function initAdminMap() {
+  if (adminMapInit) return;
+  adminMap = L.map('map').setView([15.4925, 120.8475], 13);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap © Carto',
+    maxZoom: 19
+  }).addTo(adminMap);
+  adminMapInit = true;
+}
+
+function initResidentMap() {
+  if (residentMap) return;
+  residentMap = L.map('map-resident').setView([15.4925, 120.8475], 13);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap © Carto',
+    maxZoom: 19
+  }).addTo(residentMap);
+}
+
+function updateMapMarkers(trucks, residentOnly = false) {
+  if (!residentOnly && adminMap) {
+    Object.values(adminMarkers).forEach(m => m.remove());
+    adminMarkers = {};
+    trucks.forEach(t => {
+      if (!t.lat || !t.lng) return;
+      const m = L.marker([t.lat, t.lng], { icon: makeTruckIcon(t.status) })
+        .addTo(adminMap)
+        .bindPopup(`<div style="font-family:sans-serif;min-width:180px;"><b>${t.name}</b><br>Plate: ${t.plate}<br>Driver: ${t.driver}<br>Speed: ${t.speed} km/h<br>Status: ${t.status}<br>Updated: ${t.lastSeen}</div>`);
+      adminMarkers[t.id] = m;
+    });
+  }
+
+  if (residentMap) {
+    Object.values(residentMarkers).forEach(m => m.remove());
+    residentMarkers = {};
+    const active = trucks.filter(t => t.status !== 'offline');
+    document.getElementById('resident-truck-count').textContent = active.length;
+    trucks.forEach(t => {
+      if (!t.lat || !t.lng || t.status === 'offline') return;
+      const m = L.marker([t.lat, t.lng], { icon: makeTruckIcon(t.status) })
+        .addTo(residentMap)
+        .bindPopup(`<div style="font-family:sans-serif;min-width:160px;"><b>${t.name}</b><br>Status: ${t.status === 'active' ? '✅ Active' : '🔶 En Route'}<br>Speed: ${t.speed} km/h<br>Updated: ${t.lastSeen}</div>`);
+      residentMarkers[t.id] = m;
+    });
+  }
+}
+
+// ─────────────────────────────────────────
+//  DASHBOARD STATS & FLEET TABLE
+// ─────────────────────────────────────────
+function loadFleetData() {
+  const trucks = currentTrucks;
+  updateDashboardStats(trucks);
+  updateFleetTable(trucks);
+}
+
+function updateDashboardStats(trucks) {
+  const active  = trucks.filter(t => t.status !== 'offline').length;
+  const offline = trucks.filter(t => t.status === 'offline').length;
+  document.getElementById('stat-active').textContent  = active;
+  document.getElementById('stat-offline').textContent = offline;
+  document.getElementById('stat-fleet').textContent   = trucks.length;
+}
+
+function updateFleetTable(trucks) {
+  const body = document.getElementById('fleet-table-body');
+  if (!body) return;
+  body.innerHTML = trucks.map(t => `
+    <tr>
+      <td><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:20px;">🚛</span><span style="font-weight:600;">${t.name}</span></div></td>
+      <td style="font-family:monospace;color:var(--green-bright);">${t.plate}</td>
+      <td>${t.driver}</td>
+      <td><span class="badge ${t.status==='active'?'badge-green':t.status==='enroute'?'badge-orange':'badge-red'}">${t.status}</span></td>
+      <td>${t.speed} km/h</td>
+      <td style="color:var(--gray-300);">${t.lastSeen}</td>
+      <td style="font-size:11px;color:var(--gray-300);">${t.sim}</td>
+    </tr>
+  `).join('');
+}
+
+// ─────────────────────────────────────────
+//  SIM CARD MONITORING
+// ─────────────────────────────────────────
+let simCards = JSON.parse(localStorage.getItem('sim_cards') || '[]');
+
+if (simCards.length === 0) {
+  // Seed demo SIM data
+  simCards = [
+    { id:'SIM-001', name:'Truck 1 — ESP32 SIM', number:'09171234567', provider:'Smart/TNT', dataLimit:1000, used:420, alertThreshold:20, truck:'T001', status:'ok' },
+    { id:'SIM-002', name:'Truck 2 — ESP8266 SIM', number:'09181234567', provider:'Globe/TM', dataLimit:1000, used:810, alertThreshold:20, truck:'T002', status:'critical' },
+    { id:'SIM-003', name:'Truck 3 — ESP32 SIM', number:'09661234567', provider:'DITO', dataLimit:2000, used:560, alertThreshold:20, truck:'T003', status:'ok' },
+    { id:'SIM-004', name:'Truck 4 — ESP8266 SIM', number:'09172345678', provider:'Smart/TNT', dataLimit:1000, used:900, alertThreshold:20, truck:'T004', status:'warning' },
+  ];
+  localStorage.setItem('sim_cards', JSON.stringify(simCards));
+}
+
+function getSimStatus(card) {
+  const pct = (card.used / card.dataLimit) * 100;
+  if (pct >= 90) return 'critical';
+  if (pct >= (100 - card.alertThreshold)) return 'warning';
+  return 'ok';
+}
+
+function renderSimCards() {
+  const container = document.getElementById('sim-cards-container');
+  if (!container) return;
+  if (simCards.length === 0) { container.innerHTML = '<p style="color:var(--gray-300);">No SIM cards registered. Click "+ Add SIM" to begin.</p>'; return; }
+
+  container.innerHTML = simCards.map(card => {
+    const pct = Math.min(100, Math.round((card.used / card.dataLimit) * 100));
+    const remaining = card.dataLimit - card.used;
+    const status = getSimStatus(card);
+    const barColor = status === 'critical' ? '#c0392b' : status === 'warning' ? '#d97706' : '#52b788';
+    const statusBadge = status === 'critical' ? '<span class="badge badge-red">⚠ Critical</span>' : status === 'warning' ? '<span class="badge badge-orange">⚡ Low Balance</span>' : '<span class="badge badge-green">✓ OK</span>';
+    const truck = currentTrucks.find(t => t.id === card.truck);
+
+    return `<div class="sim-card">
+      <div class="sim-header">
+        <div>
+          <div class="sim-name">📡 ${card.name}</div>
+          <div class="sim-meta">${card.provider} · ${card.number} ${truck ? `· ${truck.name}` : ''}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          ${statusBadge}
+          <button class="btn-small btn-danger" onclick="removeSimCard('${card.id}')">Remove</button>
+        </div>
+      </div>
+      <div class="load-bar-bg">
+        <div class="load-bar-fill" style="width:${pct}%;background:${barColor};"></div>
+      </div>
+      <div class="load-row">
+        <span>Used: <span class="load-val">${card.used} MB</span></span>
+        <span>Remaining: <span class="load-val" style="color:${barColor};">${remaining} MB</span></span>
+        <span>Limit: <span class="load-val">${card.dataLimit} MB</span></span>
+        <span style="font-weight:700;color:${barColor};">${pct}%</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function refreshSimData() {
+  showToast('Refreshing SIM balances…');
+  // Simulate API call to provider's balance endpoint
+  simCards = simCards.map(card => ({
+    ...card,
+    used: card.status !== 'offline' ? Math.min(card.dataLimit, card.used + Math.floor(Math.random()*10)) : card.used
+  }));
+  localStorage.setItem('sim_cards', JSON.stringify(simCards));
+  renderSimCards();
+  showToast('✓ SIM balances updated');
+
+  if (firebaseReady) {
+    try {
+      const batch = db.batch();
+      simCards.forEach(card => {
+        const ref = db.collection('sim_cards').doc(card.id);
+        batch.set(ref, card, { merge: true });
+      });
+      await batch.commit();
+    } catch(e) {}
+  }
+}
+
+function openAddSimModal() { document.getElementById('modal-add-sim').classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function addSimCard() {
+  const name  = document.getElementById('sim-module-name').value.trim();
+  const num   = document.getElementById('sim-number').value.trim();
+  const prov  = document.getElementById('sim-provider-add').value;
+  const limit = parseInt(document.getElementById('sim-data-limit').value) || 1000;
+  const thresh= parseInt(document.getElementById('sim-alert-threshold').value) || 20;
+
+  if (!name || !num) { showToast('Please fill in name and SIM number.'); return; }
+
+  const newCard = {
+    id: 'SIM-' + Date.now(),
+    name, number: num, provider: prov,
+    dataLimit: limit, used: 0,
+    alertThreshold: thresh, truck: '', status: 'ok'
+  };
+  simCards.push(newCard);
+  localStorage.setItem('sim_cards', JSON.stringify(simCards));
+
+  if (firebaseReady) {
+    db.collection('sim_cards').doc(newCard.id).set(newCard).catch(()=>{});
+  }
+
+  closeModal('modal-add-sim');
+  renderSimCards();
+  showToast('✓ SIM card added');
+}
+
+function removeSimCard(id) {
+  simCards = simCards.filter(c => c.id !== id);
+  localStorage.setItem('sim_cards', JSON.stringify(simCards));
+  if (firebaseReady) { db.collection('sim_cards').doc(id).delete().catch(()=>{}); }
+  renderSimCards();
+  showToast('SIM card removed');
+}
+
+// ─────────────────────────────────────────
+//  RESIDENT CODE MANAGEMENT
+// ─────────────────────────────────────────
+function generateCode() {
+  const name = document.getElementById('gen-name').value.trim();
+  const brgy = document.getElementById('gen-brgy').value;
+  if (!name) { showToast('Enter resident name first.'); return; }
+
+  const code = 'ALG-' + randomStr(4) + '-' + randomStr(2);
+  const entry = {
+    code, name, barangay: brgy,
+    status: 'active',
+    created: new Date().toISOString(),
+    used: false, usedBy: '', usedAt: ''
+  };
+
+  const codes = JSON.parse(localStorage.getItem('resident_codes') || '[]');
+  codes.unshift(entry);
+  localStorage.setItem('resident_codes', JSON.stringify(codes));
+
+  if (firebaseReady) {
+    db.collection('access_codes').add(entry).catch(()=>{});
+  }
+
+  renderCodesTable();
+  document.getElementById('gen-name').value = '';
+  showToast(`✓ Code generated: ${code}`);
+}
+
+function randomStr(n) {
+  return Math.random().toString(36).substring(2, 2+n).toUpperCase();
+}
+
+function revokeCode(code) {
+  const codes = JSON.parse(localStorage.getItem('resident_codes') || '[]');
+  const updated = codes.map(c => c.code === code ? { ...c, status: 'revoked' } : c);
+  localStorage.setItem('resident_codes', JSON.stringify(updated));
+  if (firebaseReady) {
+    db.collection('access_codes').where('code','==',code).get().then(snap => {
+      snap.docs.forEach(d => d.ref.update({ status: 'revoked' }));
+    }).catch(()=>{});
+  }
+  renderCodesTable();
+  showToast('Code revoked');
+}
+
+function renderCodesTable() {
+  const codes = JSON.parse(localStorage.getItem('resident_codes') || '[]');
+  const body  = document.getElementById('codes-table-body');
+  if (!body) return;
+  if (codes.length === 0) { body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--gray-300);padding:30px;">No codes generated yet.</td></tr>'; return; }
+
+  body.innerHTML = codes.map(c => `
+    <tr>
+      <td style="font-family:monospace;font-weight:700;color:var(--green-bright);letter-spacing:1px;">${c.code}</td>
+      <td>${c.name}</td>
+      <td>${c.barangay}</td>
+      <td><span class="badge ${c.status==='active'?'badge-green':c.status==='revoked'?'badge-red':'badge-blue'}">${c.status}</span></td>
+      <td style="font-size:12px;color:var(--gray-300);">${fmtDate(c.created)}</td>
+      <td style="font-size:12px;color:var(--gray-300);">${c.used ? (c.usedBy || 'Yes') : '—'}</td>
+      <td>${c.status==='active' ? `<button class="btn-small btn-danger" onclick="revokeCode('${c.code}')">Revoke</button>` : '—'}</td>
+    </tr>
+  `).join('');
+}
+
+function renderLogsTable() {
+  const logs = JSON.parse(localStorage.getItem('access_logs') || '[]');
+  const body = document.getElementById('logs-table-body');
+  if (!body) return;
+  if (logs.length === 0) { body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--gray-300);padding:30px;">No logs yet.</td></tr>'; return; }
+  body.innerHTML = logs.map(l => `
+    <tr>
+      <td style="font-size:12px;color:var(--gray-300);">${fmtDate(l.timestamp)}</td>
+      <td>${l.name}</td>
+      <td style="font-family:monospace;color:var(--green-bright);">${l.code}</td>
+      <td>${l.barangay}</td>
+      <td><span class="badge badge-green">✓ ${l.status}</span></td>
+    </tr>
+  `).join('');
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('en-PH',{dateStyle:'short',timeStyle:'short'});
+}
+
+// ─────────────────────────────────────────
+//  CONFIG SAVE
+// ─────────────────────────────────────────
+function prefillConfig() {
+  document.getElementById('cfg-apikey').value   = GEOLINKER_CONFIG.apiKey;
+  document.getElementById('cfg-fleetid').value  = GEOLINKER_CONFIG.fleetId;
+  document.getElementById('cfg-baseurl').value  = GEOLINKER_CONFIG.baseUrl;
+  document.getElementById('cfg-interval').value = GEOLINKER_CONFIG.interval;
+  const savedFb = localStorage.getItem('firebase_config');
+  if (savedFb) document.getElementById('cfg-firebase').value = JSON.stringify(JSON.parse(savedFb), null, 2);
+}
+
+function saveConfig() {
+  GEOLINKER_CONFIG.apiKey   = document.getElementById('cfg-apikey').value.trim();
+  GEOLINKER_CONFIG.fleetId  = document.getElementById('cfg-fleetid').value.trim();
+  GEOLINKER_CONFIG.baseUrl  = document.getElementById('cfg-baseurl').value.trim();
+  GEOLINKER_CONFIG.interval = parseInt(document.getElementById('cfg-interval').value) || 10;
+  localStorage.setItem('gl_apikey',   GEOLINKER_CONFIG.apiKey);
+  localStorage.setItem('gl_fleetid',  GEOLINKER_CONFIG.fleetId);
+  localStorage.setItem('gl_baseurl',  GEOLINKER_CONFIG.baseUrl);
+  localStorage.setItem('gl_interval', GEOLINKER_CONFIG.interval);
+  showToast('✓ GeoLinker config saved');
+  startGeoLinkerPolling();
+}
+
+function saveFirebaseConfig() {
+  const raw = document.getElementById('cfg-firebase').value.trim();
+  try {
+    const cfg = JSON.parse(raw);
+    localStorage.setItem('firebase_config', JSON.stringify(cfg));
+    initFirebase(cfg);
+    showToast('✓ Firebase reinitialized');
+  } catch(e) {
+    showToast('Invalid JSON — check Firebase config format');
+  }
+}
+
+function saveSimConfig() {
+  const endpoint = document.getElementById('cfg-simapi').value.trim();
+  const token    = document.getElementById('cfg-simtoken').value.trim();
+  const provider = document.getElementById('cfg-provider').value;
+  localStorage.setItem('sim_api_endpoint', endpoint);
+  localStorage.setItem('sim_api_token',    token);
+  localStorage.setItem('sim_provider',     provider);
+  showToast('✓ SIM provider config saved');
+}
+
+// ─────────────────────────────────────────
+//  TOAST
+// ─────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ─────────────────────────────────────────
+//  KEYBOARD: Enter key on login
+// ─────────────────────────────────────────
+document.getElementById('login-pass').addEventListener('keydown', e => { if(e.key==='Enter') adminLogin(); });
+document.getElementById('resident-code').addEventListener('keydown', e => { if(e.key==='Enter') residentLogin(); });
+</script>
+</body>
+</html>
