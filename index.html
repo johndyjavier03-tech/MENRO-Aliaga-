@@ -7,7 +7,7 @@
 <!--
   BUDGET LOG (local): single file, no server, no account.
   Data is saved in this browser (localStorage). Open the file, or host it on GitHub Pages.
-  Use "Download backup" to move data to another device or browser, and "Restore backup" to load it.
+  Use "Download backup" (an Excel file) to move data to another device or browser, and "Restore backup" to load it.
 -->
 <style>
 :root{--bg:#f6f7f8;--ink:#1c2024;--mute:#6b7480;--line:#e3e6ea;--in:#15803d;--out:#b4412e;--card:#fff}
@@ -42,6 +42,7 @@ details summary{display:flex;gap:16px;align-items:baseline;cursor:pointer}detail
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script type="text/babel" data-presets="react">
 const { useEffect, useMemo, useState, useCallback } = React
 
@@ -59,26 +60,82 @@ const DEFAULT_MEMBERS = ['Nella','Mila','Daniella','Derick','Adriane','Mj','Andr
 const norm = d => { d.members ||= DEFAULT_MEMBERS.map((n, i) => ({ id: 500 + i, name: n })); d.payments ||= {}; d.weeks ||= 4; return d }
 const total = rows => rows.reduce((t, r) => t + Number(r.amount), 0)
 
-const table = (name, dateCol) => ({
+// Keep the payment checklist in step with collection records
+function syncChecklist(d, old, cur) {
+  const key = n => String(n ?? '').toLowerCase()
+  const member = n => n && d.members.find(m => key(m.name) === key(n))
+  if (old) {
+    const m = member(old.person_responsible)
+    const still = d.collections.some(r => key(r.person_responsible) === key(old.person_responsible) && Number(r.week_number) === Number(old.week_number))
+    if (m && !still) delete d.payments[m.id + '|' + old.week_number]
+  }
+  if (cur) {
+    const m = member(cur.person_responsible)
+    if (m) { d.payments[m.id + '|' + cur.week_number] = true; d.weeks = Math.max(d.weeks, Number(cur.week_number)) }
+  }
+}
+
+const table = (name, dateCol, sync) => ({
   async list() { return [...read()[name]].sort((a, b) => b[dateCol].localeCompare(a[dateCol]) || b.id - a.id) },
   async save({ id, ...row }) {
-    const d = read(), list = d[name]
-    if (name === 'expenses') {
-      const others = total(list.filter(r => r.id !== id))
-      if (others + Number(row.amount) > total(d.collections)) throw new Error('Expense exceeds the remaining budget.')
-    }
-    if (id) d[name] = list.map(r => r.id === id ? { ...r, ...row } : r)
-    else d[name] = [...list, { ...row, id: ++d.next }]
+    const d = read(), list = d[name], old = id ? list.find(r => r.id === id) : null
+    const cur = id ? { ...old, ...row } : { ...row, id: ++d.next }
+    d[name] = id ? list.map(r => r.id === id ? cur : r) : [...list, cur]
+    if (sync) sync(d, old, cur)
     write(d)
   },
-  async remove(id) { const d = read(); d[name] = d[name].filter(r => r.id !== id); write(d) },
+  async remove(id) { const d = read(), old = d[name].find(r => r.id === id); d[name] = d[name].filter(r => r.id !== id); if (sync) sync(d, old, null); write(d) },
 })
-const db = { collections: table('collections', 'collection_date'), expenses: table('expenses', 'expense_date'),
+const db = { collections: table('collections', 'collection_date', syncChecklist), expenses: table('expenses', 'expense_date'),
   pay: () => { const d = read(); return { members: d.members, payments: d.payments, weeks: d.weeks } },
   addMember(name) { name = name.trim(); if (!name) throw new Error('Enter a name.'); const d = read(); if (d.members.some(m => m.name.toLowerCase() === name.toLowerCase())) throw new Error(`${name} is already on the list.`); d.members.push({ id: ++d.next, name }); write(d) },
   removeMember(id) { const d = read(); d.members = d.members.filter(m => m.id !== id); Object.keys(d.payments).forEach(k => { if (k.startsWith(id + '|')) delete d.payments[k] }); write(d) },
   setPaid(id, w, v) { const d = read(), k = id + '|' + w; if (v) d.payments[k] = true; else delete d.payments[k]; write(d) },
   addWeek() { const d = read(); d.weeks++; write(d) },
+  exportXlsx(stamp) {
+    const d = read(), X = XLSX, wb = X.utils.book_new()
+    const cC = ['id', 'week_number', 'collection_date', 'description', 'amount', 'person_responsible', 'is_sample']
+    const cE = ['id', 'expense_date', 'person_name', 'category', 'expense_name', 'description', 'quantity', 'amount', 'receipt_reference', 'remarks', 'is_sample']
+    const sheet = (rows, cols) => X.utils.aoa_to_sheet([cols, ...rows.map(r => cols.map(c => r[c] ?? ''))])
+    const c = total(d.collections), e = total(d.expenses)
+    const sum = X.utils.aoa_to_sheet([['Budget summary', ''], ['Total collected', ''], ['Total expenses', ''], ['Remaining budget', '']])
+    sum.B2 = { t: 'n', f: 'SUM(Collections!E2:E5000)', v: c }
+    sum.B3 = { t: 'n', f: 'SUM(Expenses!H2:H5000)', v: e }
+    sum.B4 = { t: 'n', f: 'B2-B3', v: c - e }
+    sum['!cols'] = [{ wch: 20 }, { wch: 16 }]
+    const weeks = Array.from({ length: d.weeks }, (_, i) => i + 1)
+    const chk = X.utils.aoa_to_sheet([['Name', ...weeks.map(w => 'W' + w), 'Weeks paid'],
+      ...d.members.map(m => [m.name, ...weeks.map(w => d.payments[m.id + '|' + w] ? 'Yes' : ''), weeks.filter(w => d.payments[m.id + '|' + w]).length])])
+    X.utils.book_append_sheet(wb, sum, 'Summary')
+    X.utils.book_append_sheet(wb, sheet(d.collections, cC), 'Collections')
+    X.utils.book_append_sheet(wb, sheet(d.expenses, cE), 'Expenses')
+    X.utils.book_append_sheet(wb, chk, 'Checklist')
+    X.writeFile(wb, `budget-log-${stamp}.xlsx`)
+  },
+  importXlsx(buf) {
+    const X = XLSX, wb = X.read(buf, { type: 'array', cellDates: true })
+    const rows = n => { if (!wb.Sheets[n]) throw new Error(`The sheet "${n}" is missing. Use a backup made by this app.`); return X.utils.sheet_to_json(wb.Sheets[n], { defval: null }) }
+    const ds = v => v instanceof Date ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}` : String(v ?? '').slice(0, 10)
+    const txt = v => v == null || v === '' ? null : String(v)
+    const yes = v => v === true || /^true$/i.test(String(v))
+    const col = rows('Collections').map(r => ({ id: Number(r.id) || 0, week_number: Number(r.week_number), collection_date: ds(r.collection_date), description: txt(r.description), amount: Number(r.amount), person_responsible: txt(r.person_responsible), is_sample: yes(r.is_sample) }))
+      .filter(r => r.amount > 0 && r.week_number > 0 && r.collection_date)
+    const exp = rows('Expenses').map(r => ({ id: Number(r.id) || 0, expense_date: ds(r.expense_date), person_name: txt(r.person_name), category: txt(r.category), expense_name: txt(r.expense_name), description: txt(r.description), quantity: r.quantity == null ? null : Number(r.quantity), amount: Number(r.amount), receipt_reference: txt(r.receipt_reference), remarks: txt(r.remarks), is_sample: yes(r.is_sample) }))
+      .filter(r => r.amount > 0 && r.person_name && r.expense_name && r.expense_date)
+    let next = Math.max(1000, ...col.map(r => r.id), ...exp.map(r => r.id))
+    col.concat(exp).forEach(r => { if (!r.id) r.id = ++next })
+    let members, payments = {}, weeks
+    if (wb.Sheets.Checklist) {
+      const a = X.utils.sheet_to_json(wb.Sheets.Checklist, { header: 1, defval: '' }), head = a[0] || []
+      const cols = head.map((h, i) => [String(h), i]).filter(([h]) => /^W\d+$/.test(h)).map(([h, i]) => [Number(h.slice(1)), i])
+      weeks = Math.max(1, ...cols.map(([w]) => w)); members = []
+      a.slice(1).filter(r => String(r[0]).trim()).forEach(r => {
+        const id = ++next; members.push({ id, name: String(r[0]).trim() })
+        cols.forEach(([w, i]) => { if (String(r[i]).trim() && !/^(no|0|false)$/i.test(String(r[i]).trim())) payments[id + '|' + w] = true })
+      })
+    }
+    write(norm({ collections: col, expenses: exp, next, members, payments, weeks }))
+  },
   exportAll: () => JSON.stringify(read(), null, 2),
   importAll(text) { const d = JSON.parse(text); if (!Array.isArray(d.collections) || !Array.isArray(d.expenses)) throw new Error('This file is not a Budget Log backup.'); write(norm({ next: 1000, ...d })) },
   clearSample() { const d = read(); d.collections = d.collections.filter(r => !r.is_sample); d.expenses = d.expenses.filter(r => !r.is_sample); write(d) } }
@@ -97,14 +154,15 @@ function Crud({ title, rows, fields, show, store, admin, notify, tone, available
     e.preventDefault()
     const amt = Number(form.amount)
     if (!(amt > 0)) return notify('Amount must be greater than zero.', true)
-    if (tone === 'out') { const old = rows.find(r => r.id === form.id)?.amount || 0; if (amt > available + Number(old)) return notify('This expense is more than the remaining budget.', true) }
     try { await store.save({ ...form, amount: amt }); setForm(null); notify('Saved.') } catch (err) { notify(err.message, true) }
   }
   async function del(r) { if (confirm('Delete this record?')) try { await store.remove(r.id); notify('Deleted.') } catch (err) { notify(err.message, true) } }
   return <section>
     <div className="bar"><h2>{title} <small>({rows.length})</small></h2><input placeholder="Search…" value={q} onChange={e => setQ(e.target.value)} /><button className="primary" onClick={() => setForm({ ...blank })}>Add</button></div>
     {form && <form className="card grid" onSubmit={save}>
-      {fields.map(f => <label key={f.k}>{f.label}<input type={f.type || 'text'} step={f.type === 'number' ? '0.01' : undefined} required={f.req} value={form[f.k] ?? ''} onChange={e => setForm({ ...form, [f.k]: e.target.value === '' && !f.req ? null : e.target.value })} /></label>)}
+      {fields.map(f => <label key={f.k}>{f.label}{f.type === 'select'
+        ? <select value={form[f.k] ?? ''} onChange={e => setForm({ ...form, [f.k]: e.target.value || null })}><option value="">Choose a name</option>{[...new Set([...(f.options || []), form[f.k]].filter(Boolean))].map(o => <option key={o}>{o}</option>)}</select>
+        : <input type={f.type || 'text'} step={f.type === 'number' ? '0.01' : undefined} required={f.req} value={form[f.k] ?? ''} onChange={e => setForm({ ...form, [f.k]: e.target.value === '' && !f.req ? null : e.target.value })} />}</label>)}
       <div className="row"><button className="primary">Save</button><button type="button" className="link" onClick={() => setForm(null)}>Cancel</button></div>
     </form>}
     <div className="scroll"><table><thead><tr>{show.map(s => <th key={s.k}>{s.label}</th>)}<th /></tr></thead><tbody>
@@ -187,17 +245,15 @@ function App() {
   useEffect(() => { load(); window.addEventListener('storage', load); return () => window.removeEventListener('storage', load) }, [load])
   const wrap = s => ({ save: async r => { await s.save(r); await load() }, remove: async id => { await s.remove(id); await load() } })
   const available = sum(cols) - sum(exps)
+  const colFields = COL_FIELDS.map(f => f.k === 'person_responsible' ? { ...f, label: 'Person', type: 'select', options: pay.members.map(m => m.name) } : f)
 
-  function backup() {
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([db.exportAll()], { type: 'application/json' }))
-    a.download = `budget-log-${today()}.json`; a.click(); URL.revokeObjectURL(a.href)
-  }
+  const backup = () => db.exportXlsx(today())
   function restore(e) {
     const f = e.target.files[0]; if (!f) return
-    const r = new FileReader()
-    r.onload = async () => { try { db.importAll(r.result); await load(); notify('Backup restored.') } catch (err) { notify(err.message, true) } }
-    r.readAsText(f); e.target.value = ''
+    if (!confirm('Restoring replaces all current data. Continue?')) { e.target.value = ''; return }
+    const json = /\.json$/i.test(f.name), r = new FileReader()
+    r.onload = async () => { try { json ? db.importAll(r.result) : db.importXlsx(r.result); await load(); notify('Backup restored.') } catch (err) { notify(err.message, true) } }
+    json ? r.readAsText(f) : r.readAsArrayBuffer(f); e.target.value = ''
   }
   async function clearSample() { if (confirm('Remove all sample records?')) { db.clearSample(); await load(); notify('Sample data removed.') } }
   const hasSample = [...cols, ...exps].some(r => r.is_sample)
@@ -205,12 +261,12 @@ function App() {
   return <div className="shell">
     <nav><b>Budget Log</b>{PAGES.map((p, i) => <button key={p} className={i === page ? 'on' : ''} onClick={() => setPage(i)}>{p}</button>)}
       <div className="who"><small>Saved in this browser only</small>
-        <button onClick={backup}>Download backup</button>
-        <label className="filebtn">Restore backup<input type="file" accept="application/json" onChange={restore} hidden /></label>
+        <button onClick={backup}>Download backup (Excel)</button>
+        <label className="filebtn">Restore backup<input type="file" accept=".xlsx,.json" onChange={restore} hidden /></label>
         {hasSample && <button onClick={clearSample}>Remove sample data</button>}</div></nav>
     <main>{[
       <Dashboard cols={cols} exps={exps} extra={<Checklist pay={pay} reload={load} notify={notify} />} />,
-      <Crud title="Weekly collections" rows={cols} fields={COL_FIELDS} show={[{ k: 'week_number', label: 'Week' }, { k: 'collection_date', label: 'Date' }, { k: 'description', label: 'Remarks' }, { k: 'amount', label: 'Amount' }]} store={wrap(db.collections)} admin={true} notify={notify} tone="in" />,
+      <Crud title="Weekly collections" rows={cols} fields={colFields} show={[{ k: 'week_number', label: 'Week' }, { k: 'collection_date', label: 'Date' }, { k: 'person_responsible', label: 'Person' }, { k: 'description', label: 'Remarks' }, { k: 'amount', label: 'Amount' }]} store={wrap(db.collections)} admin={true} notify={notify} tone="in" />,
       <Crud title="Expenses" rows={exps} fields={EXP_FIELDS} show={[{ k: 'expense_date', label: 'Date' }, { k: 'person_name', label: 'Person' }, { k: 'category', label: 'Category' }, { k: 'expense_name', label: 'Expense' }, { k: 'amount', label: 'Amount' }]} store={wrap(db.expenses)} admin={true} notify={notify} tone="out" available={available} />,
       <Breakdown exps={exps} />, <History cols={cols} exps={exps} />][page]}</main>
     {toast && <div className={'toast ' + (toast.bad ? 'bad' : '')}>{toast.text}</div>}
