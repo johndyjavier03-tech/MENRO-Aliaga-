@@ -134,19 +134,19 @@ const db = { collections: table('collections', 'collection_date', syncChecklist)
     setF(wsP, [...subs, [`E${P.length}`, 'SUM(Expenses!H2:H5000)', e, PESO]])
 
     // Summary: totals, collected per week, expenses per person and category
-    const S = [['Budget Log Backup'], ['Created', stamp], [], ['Overview'], ['Total collected', c], ['Total expenses', e], ['Remaining budget', c - e], [], ['Collected by week'], ['Week', 'Collected (₱)', 'Members paid', 'Not yet paid']]
+    const S = [['Budget Log Backup'], ['Created', stamp], [], ['Overview'], ['Total collected', c], ['Total expenses', e], ['Remaining budget', c - e], [], ['Collected by week'], ['Week', 'Collected (₱)', 'Members paid', 'Not yet paid', 'Paid (names)', 'Not yet paid (names)']]
     const F = [['B5', 'SUM(Collections!F2:F5000)', c, PESO], ['B6', 'SUM(Expenses!H2:H5000)', e, PESO], ['B7', 'B5-B6', c - e, PESO]], money = []
     weeks.forEach(w => {
       const row = S.length + 1, L = X.utils.encode_col(w), paid = d.members.filter(m => isPaid(m, w)).length
-      S.push([w, total(cols.filter(r => Number(r.week_number) === w)), paid, d.members.length - paid])
+      S.push([w, total(cols.filter(r => Number(r.week_number) === w)), paid, d.members.length - paid, d.members.filter(m => isPaid(m, w)).map(m => m.name).join(', ') || '-', d.members.filter(m => !isPaid(m, w)).map(m => m.name).join(', ') || '-'])
       F.push([`B${row}`, `SUMIF(Collections!B$2:B$5000,A${row},Collections!F$2:F$5000)`, S[S.length - 1][1], PESO], [`C${row}`, `COUNTIF(Checklist!${L}$2:${L}$500,"Yes")`, paid], [`D${row}`, `COUNTA(Checklist!A$2:A$500)-C${row}`, d.members.length - paid])
     })
-    S.push([], ['Expenses by person'], ['Person', 'Number of expenses', 'Total (₱)'])
-    names.forEach(n => { S.push([n, people[n].length, total(people[n])]); money.push(`C${S.length}`) })
+    S.push([], ['Expenses by person'], ['Person', 'Number of expenses', 'Total (₱)', 'Items bought'])
+    names.forEach(n => { S.push([n, people[n].length, total(people[n]), people[n].map(x => x.expense_name).join(', ')]); money.push(`C${S.length}`) })
     const cats = {}; exps.forEach(x => { const k = (x.category || 'Uncategorized').trim(); cats[k] = (cats[k] || 0) + Number(x.amount) })
     S.push([], ['Expenses by category'], ['Category', '', 'Total (₱)'])
     Object.entries(cats).sort((a, b) => b[1] - a[1]).forEach(([k, v]) => { S.push([k, '', v]); money.push(`C${S.length}`) })
-    const wsS = make(S, [], false); wsS['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 16 }]
+    const wsS = make(S, [], false); wsS['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 48 }, { wch: 48 }]
     setF(wsS, F); money.forEach(a => { if (wsS[a]) wsS[a].z = PESO })
 
     // Names Summary: one row per person with what they paid each week, weeks missed and what they spent
@@ -264,7 +264,12 @@ function Checklist({ pay, reload, notify }) {
 
 function Dashboard({ cols, exps, extra }) {
   const c = sum(cols), s = sum(exps), rem = c - s
-  const recent = [...cols.map(x => ({ ...x, type: 'in', date: x.collection_date, label: x.description || `Week ${x.week_number}` })), ...exps.map(x => ({ ...x, type: 'out', date: x.expense_date, label: `${x.person_name}: ${x.expense_name}` }))].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8)
+  const recent = [...cols.map(x => ({ ...x, type: 'in', date: x.collection_date, who: x.person_responsible || '', label: x.description || `Week ${x.week_number}` })), ...exps.map(x => ({ ...x, type: 'out', date: x.expense_date, who: x.person_name, label: x.expense_name }))].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8)
+  // Everyone who has paid or spent, with totals
+  const names = new Map(), key = n => String(n ?? '').trim().toLowerCase()
+  const add = (n, f, amt) => { if (!key(n)) return; const o = names.get(key(n)) || { name: String(n).trim(), paid: 0, spent: 0 }; o[f] += Number(amt); names.set(key(n), o) }
+  cols.forEach(x => add(x.person_responsible, 'paid', x.amount)); exps.forEach(x => add(x.person_name, 'spent', x.amount))
+  const people = [...names.values()].sort((a, b) => (b.paid + b.spent) - (a.paid + a.spent) || a.name.localeCompare(b.name))
   return <section>
     {rem < 0 && <p className="warn">Expenses exceed the collected budget.</p>}
     <div className="cards">
@@ -274,8 +279,13 @@ function Dashboard({ cols, exps, extra }) {
       <div className="card"><span>Latest collection</span><b>{peso(cols[0]?.amount)}</b></div>
     </div>
     {extra}
+    <div className="card"><h2>Names: paid and expenses</h2>
+      <div className="scroll"><table><thead><tr><th>Name</th><th>Paid in</th><th>Spent</th></tr></thead><tbody>
+        {people.map(o => <tr key={o.name}><td>{o.name}</td><td className="in">{o.paid ? peso(o.paid) : <span className="mute">None</span>}</td><td className="out">{o.spent ? peso(o.spent) : <span className="mute">None</span>}</td></tr>)}
+        {!people.length && <tr><td colSpan={3} className="mute">No names yet. Choose a person when you record a collection or an expense.</td></tr>}
+      </tbody></table></div></div>
     <h2>Recent transactions</h2>
-    <div className="scroll"><table><tbody>{recent.map(r => <tr key={r.type + r.id}><td className="mute">{r.date}</td><td>{r.label}</td><td className={r.type}>{r.type === 'in' ? '+' : '−'}{peso(r.amount)}</td></tr>)}</tbody></table></div>
+    <div className="scroll"><table><tbody>{recent.map(r => <tr key={r.type + r.id}><td className="mute">{r.date}</td><td>{r.who || <span className="mute">No name</span>}</td><td>{r.label}</td><td className={r.type}>{r.type === 'in' ? '+' : '−'}{peso(r.amount)}</td></tr>)}</tbody></table></div>
   </section>
 }
 
