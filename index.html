@@ -93,45 +93,91 @@ const db = { collections: table('collections', 'collection_date', syncChecklist)
   setPaid(id, w, v) { const d = read(), k = id + '|' + w; if (v) d.payments[k] = true; else delete d.payments[k]; write(d) },
   addWeek() { const d = read(); d.weeks++; write(d) },
   exportXlsx(stamp) {
-    const d = read(), X = XLSX, wb = X.utils.book_new()
-    const cC = ['id', 'week_number', 'collection_date', 'description', 'amount', 'person_responsible', 'is_sample']
-    const cE = ['id', 'expense_date', 'person_name', 'category', 'expense_name', 'description', 'quantity', 'amount', 'receipt_reference', 'remarks', 'is_sample']
-    const sheet = (rows, cols) => X.utils.aoa_to_sheet([cols, ...rows.map(r => cols.map(c => r[c] ?? ''))])
-    const c = total(d.collections), e = total(d.expenses)
-    const sum = X.utils.aoa_to_sheet([['Budget summary', ''], ['Total collected', ''], ['Total expenses', ''], ['Remaining budget', '']])
-    sum.B2 = { t: 'n', f: 'SUM(Collections!E2:E5000)', v: c }
-    sum.B3 = { t: 'n', f: 'SUM(Expenses!H2:H5000)', v: e }
-    sum.B4 = { t: 'n', f: 'B2-B3', v: c - e }
-    sum['!cols'] = [{ wch: 20 }, { wch: 16 }]
-    const weeks = Array.from({ length: d.weeks }, (_, i) => i + 1)
-    const chk = X.utils.aoa_to_sheet([['Name', ...weeks.map(w => 'W' + w), 'Weeks paid'],
-      ...d.members.map(m => [m.name, ...weeks.map(w => d.payments[m.id + '|' + w] ? 'Yes' : ''), weeks.filter(w => d.payments[m.id + '|' + w]).length])])
-    X.utils.book_append_sheet(wb, sum, 'Summary')
-    X.utils.book_append_sheet(wb, sheet(d.collections, cC), 'Collections')
-    X.utils.book_append_sheet(wb, sheet(d.expenses, cE), 'Expenses')
-    X.utils.book_append_sheet(wb, chk, 'Checklist')
+    const d = read(), X = XLSX, wb = X.utils.book_new(), PESO = '"₱"#,##0.00'
+    const cmp = (a, b) => String(a).localeCompare(String(b))
+    const cols = [...d.collections].sort((a, b) => Number(a.week_number) - Number(b.week_number) || cmp(a.collection_date, b.collection_date) || a.id - b.id)
+    const exps = [...d.expenses].sort((a, b) => cmp(a.expense_date, b.expense_date) || a.id - b.id)
+    const c = total(cols), e = total(exps)
+    const widths = rows => Array.from({ length: Math.max(...rows.map(r => r.length)) }, (_, i) => ({ wch: Math.min(45, Math.max(10, ...rows.map(r => String(r[i] ?? '').length + 2))) }))
+    // plain sheet with column widths, optional filter buttons and peso format on money columns
+    const make = (rows, money = [], filter = true) => {
+      const ws = X.utils.aoa_to_sheet(rows); ws['!cols'] = widths(rows)
+      if (filter) ws['!autofilter'] = { ref: X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rows.length - 1, c: rows[0].length - 1 } }) }
+      rows.forEach((_, r) => money.forEach(cc => { const cell = ws[X.utils.encode_cell({ r, c: cc })]; if (r > 0 && cell && cell.t === 'n') cell.z = PESO }))
+      return ws
+    }
+    const setF = (ws, list) => list.forEach(([addr, f, v, z]) => { ws[addr] = { t: 'n', f, v, ...(z ? { z } : {}) } })
+
+    // Collections: one row per payment received, grouped by week
+    const wsC = make([['ID', 'Week', 'Date', 'Person', 'Remarks', 'Amount (₱)', 'Sample data'],
+      ...cols.map(r => [r.id, Number(r.week_number), r.collection_date, r.person_responsible ?? '', r.description ?? '', Number(r.amount), r.is_sample ? 'Yes' : ''])], [5])
+    // Expenses: one row per expense, oldest first
+    const wsE = make([['ID', 'Date', 'Person', 'Category', 'Expense', 'Details', 'Quantity', 'Amount (₱)', 'Receipt ref.', 'Remarks', 'Sample data'],
+      ...exps.map(r => [r.id, r.expense_date, r.person_name, r.category ?? '', r.expense_name, r.description ?? '', r.quantity ?? '', Number(r.amount), r.receipt_reference ?? '', r.remarks ?? '', r.is_sample ? 'Yes' : ''])], [7])
+    // Checklist: names down, weeks across
+    const weeks = Array.from({ length: d.weeks }, (_, i) => i + 1), isPaid = (m, w) => !!d.payments[m.id + '|' + w]
+    const wsK = make([['Name', ...weeks.map(w => 'Week ' + w), 'Weeks paid'],
+      ...d.members.map(m => [m.name, ...weeks.map(w => isPaid(m, w) ? 'Yes' : ''), weeks.filter(w => isPaid(m, w)).length])])
+
+    // By Person: each person's expenses together with a subtotal
+    const people = {}; exps.forEach(x => (people[x.person_name.trim()] ||= []).push(x))
+    const names = Object.keys(people).sort((a, b) => total(people[b]) - total(people[a]))
+    const P = [['Person', 'Date', 'Expense', 'Category', 'Amount (₱)']], subs = []
+    names.forEach(n => {
+      const start = P.length
+      people[n].forEach(x => P.push([n, x.expense_date, x.expense_name, x.category ?? '', Number(x.amount)]))
+      subs.push([`E${P.length + 1}`, `SUM(E${start + 1}:E${P.length})`, total(people[n]), PESO])
+      P.push([`Total for ${n}`, '', '', '', total(people[n])]); P.push([])
+    })
+    P.push(['All people', '', '', '', e])
+    const wsP = make(P, [4], false); wsP['!cols'][0].wch = Math.max(wsP['!cols'][0].wch, 16)
+    setF(wsP, [...subs, [`E${P.length}`, 'SUM(Expenses!H2:H5000)', e, PESO]])
+
+    // Summary: totals, collected per week, expenses per person and category
+    const S = [['Budget Log Backup'], ['Created', stamp], [], ['Overview'], ['Total collected', c], ['Total expenses', e], ['Remaining budget', c - e], [], ['Collected by week'], ['Week', 'Collected (₱)', 'Members paid', 'Not yet paid']]
+    const F = [['B5', 'SUM(Collections!F2:F5000)', c, PESO], ['B6', 'SUM(Expenses!H2:H5000)', e, PESO], ['B7', 'B5-B6', c - e, PESO]], money = []
+    weeks.forEach(w => {
+      const row = S.length + 1, L = X.utils.encode_col(w), paid = d.members.filter(m => isPaid(m, w)).length
+      S.push([w, total(cols.filter(r => Number(r.week_number) === w)), paid, d.members.length - paid])
+      F.push([`B${row}`, `SUMIF(Collections!B$2:B$5000,A${row},Collections!F$2:F$5000)`, S[S.length - 1][1], PESO], [`C${row}`, `COUNTIF(Checklist!${L}$2:${L}$500,"Yes")`, paid], [`D${row}`, `COUNTA(Checklist!A$2:A$500)-C${row}`, d.members.length - paid])
+    })
+    S.push([], ['Expenses by person'], ['Person', 'Number of expenses', 'Total (₱)'])
+    names.forEach(n => { S.push([n, people[n].length, total(people[n])]); money.push(`C${S.length}`) })
+    const cats = {}; exps.forEach(x => { const k = (x.category || 'Uncategorized').trim(); cats[k] = (cats[k] || 0) + Number(x.amount) })
+    S.push([], ['Expenses by category'], ['Category', '', 'Total (₱)'])
+    Object.entries(cats).sort((a, b) => b[1] - a[1]).forEach(([k, v]) => { S.push([k, '', v]); money.push(`C${S.length}`) })
+    const wsS = make(S, [], false); wsS['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 16 }]
+    setF(wsS, F); money.forEach(a => { if (wsS[a]) wsS[a].z = PESO })
+
+    X.utils.book_append_sheet(wb, wsS, 'Summary')
+    X.utils.book_append_sheet(wb, wsC, 'Collections')
+    X.utils.book_append_sheet(wb, wsE, 'Expenses')
+    X.utils.book_append_sheet(wb, wsP, 'By Person')
+    X.utils.book_append_sheet(wb, wsK, 'Checklist')
     X.writeFile(wb, `budget-log-${stamp}.xlsx`)
   },
   importXlsx(buf) {
+    // Reads Collections, Expenses and Checklist. Summary and By Person are reports and are ignored.
     const X = XLSX, wb = X.read(buf, { type: 'array', cellDates: true })
     const rows = n => { if (!wb.Sheets[n]) throw new Error(`The sheet "${n}" is missing. Use a backup made by this app.`); return X.utils.sheet_to_json(wb.Sheets[n], { defval: null }) }
+    const pick = (r, ...keys) => { for (const k of keys) if (r[k] != null && r[k] !== '') return r[k]; return null }
     const ds = v => v instanceof Date ? `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}` : String(v ?? '').slice(0, 10)
     const txt = v => v == null || v === '' ? null : String(v)
-    const yes = v => v === true || /^true$/i.test(String(v))
-    const col = rows('Collections').map(r => ({ id: Number(r.id) || 0, week_number: Number(r.week_number), collection_date: ds(r.collection_date), description: txt(r.description), amount: Number(r.amount), person_responsible: txt(r.person_responsible), is_sample: yes(r.is_sample) }))
+    const yes = v => v === true || /^(true|yes)$/i.test(String(v))
+    const col = rows('Collections').map(r => ({ id: Number(pick(r, 'ID', 'id')) || 0, week_number: Number(pick(r, 'Week', 'week_number')), collection_date: ds(pick(r, 'Date', 'collection_date')), description: txt(pick(r, 'Remarks', 'description')), amount: Number(pick(r, 'Amount (₱)', 'amount')), person_responsible: txt(pick(r, 'Person', 'person_responsible')), is_sample: yes(pick(r, 'Sample data', 'is_sample')) }))
       .filter(r => r.amount > 0 && r.week_number > 0 && r.collection_date)
-    const exp = rows('Expenses').map(r => ({ id: Number(r.id) || 0, expense_date: ds(r.expense_date), person_name: txt(r.person_name), category: txt(r.category), expense_name: txt(r.expense_name), description: txt(r.description), quantity: r.quantity == null ? null : Number(r.quantity), amount: Number(r.amount), receipt_reference: txt(r.receipt_reference), remarks: txt(r.remarks), is_sample: yes(r.is_sample) }))
+    const exp = rows('Expenses').map(r => ({ id: Number(pick(r, 'ID', 'id')) || 0, expense_date: ds(pick(r, 'Date', 'expense_date')), person_name: txt(pick(r, 'Person', 'person_name')), category: txt(pick(r, 'Category', 'category')), expense_name: txt(pick(r, 'Expense', 'expense_name')), description: txt(pick(r, 'Details', 'description')), quantity: pick(r, 'Quantity', 'quantity') == null ? null : Number(pick(r, 'Quantity', 'quantity')), amount: Number(pick(r, 'Amount (₱)', 'amount')), receipt_reference: txt(pick(r, 'Receipt ref.', 'receipt_reference')), remarks: txt(pick(r, 'Remarks', 'remarks')), is_sample: yes(pick(r, 'Sample data', 'is_sample')) }))
       .filter(r => r.amount > 0 && r.person_name && r.expense_name && r.expense_date)
     let next = Math.max(1000, ...col.map(r => r.id), ...exp.map(r => r.id))
     col.concat(exp).forEach(r => { if (!r.id) r.id = ++next })
     let members, payments = {}, weeks
     if (wb.Sheets.Checklist) {
       const a = X.utils.sheet_to_json(wb.Sheets.Checklist, { header: 1, defval: '' }), head = a[0] || []
-      const cols = head.map((h, i) => [String(h), i]).filter(([h]) => /^W\d+$/.test(h)).map(([h, i]) => [Number(h.slice(1)), i])
-      weeks = Math.max(1, ...cols.map(([w]) => w)); members = []
+      const wc = head.map((h, i) => [String(h).trim().match(/^(?:W|Week )(\d+)$/i), i]).filter(([m]) => m).map(([m, i]) => [Number(m[1]), i])
+      weeks = Math.max(1, ...wc.map(([w]) => w)); members = []
       a.slice(1).filter(r => String(r[0]).trim()).forEach(r => {
         const id = ++next; members.push({ id, name: String(r[0]).trim() })
-        cols.forEach(([w, i]) => { if (String(r[i]).trim() && !/^(no|0|false)$/i.test(String(r[i]).trim())) payments[id + '|' + w] = true })
+        wc.forEach(([w, i]) => { const v = String(r[i]).trim(); if (v && !/^(no|0|false)$/i.test(v)) payments[id + '|' + w] = true })
       })
     }
     write(norm({ collections: col, expenses: exp, next, members, payments, weeks }))
