@@ -1,73 +1,188 @@
-"""Budget log: weekly collections + expenses, stored in a single SQLite file (budget.db)."""
-import sqlite3
-from datetime import date
-from pathlib import Path
-from flask import Flask, g, jsonify, request, send_from_directory
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Budget Log</title>
+<!--
+  BUDGET LOG (local): single file, no server, no account.
+  Data is saved in this browser (localStorage). Open the file, or host it on GitHub Pages.
+  Use "Download backup" to move data to another device or browser, and "Restore backup" to load it.
+-->
+<style>
+:root{--bg:#f6f7f8;--ink:#1c2024;--mute:#6b7480;--line:#e3e6ea;--in:#15803d;--out:#b4412e;--card:#fff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
+h1,h2{font-weight:600}h2{font-size:17px;margin:0}small{color:var(--mute);font-weight:400}
+.in{color:var(--in)}.out{color:var(--out)}.mute{color:var(--mute)}.pad{padding:40px}
+.shell{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+nav{background:var(--card);border-right:1px solid var(--line);padding:20px 12px;display:flex;flex-direction:column;gap:4px}
+nav>b{padding:0 10px 14px}nav button{text-align:left;border:0;background:none;padding:8px 10px;border-radius:8px;font:inherit;cursor:pointer;color:var(--mute)}
+nav button.on{background:var(--bg);color:var(--ink);font-weight:600}.who{margin-top:auto;padding:10px;font-size:13px}.who button{padding:6px 0;text-decoration:underline}
+main{padding:28px;max-width:960px;width:100%}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:12px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:24px}.cards span{color:var(--mute);font-size:13px;display:block}.cards b{font-size:22px;font-weight:500}
+.bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}.bar h2{margin-right:auto}
+input,select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);min-width:0}
+button.primary{background:var(--ink);color:#fff;border:0;border-radius:8px;padding:8px 16px;font:inherit;cursor:pointer}button:disabled{opacity:.5}
+button.link{background:none;border:0;color:var(--mute);text-decoration:underline;cursor:pointer;font:inherit}button.link.out{color:var(--out)}
+:focus-visible{outline:2px solid var(--in);outline-offset:2px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.grid label{font-size:13px;color:var(--mute);display:flex;flex-direction:column;gap:4px}.row{display:flex;gap:12px;align-items:end}
+.scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px}th{text-align:left;color:var(--mute);font-weight:500;font-size:13px}th,td{padding:9px 12px;border-bottom:1px solid var(--line)}.act{white-space:nowrap;text-align:right}
+details summary{display:flex;gap:16px;align-items:baseline;cursor:pointer}details summary span{margin-left:auto;color:var(--mute);font-size:13px}details em{font-size:12px;color:var(--out)}details table{margin-top:10px}
+.warn{background:#fdecea;color:var(--out);padding:10px 14px;border-radius:8px}
+.auth{max-width:340px;margin:12vh auto;display:flex;flex-direction:column;gap:10px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px}.toast.bad{background:var(--out)}
+@media(max-width:700px){.shell{grid-template-columns:1fr}nav{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}nav>b,.who{display:none}nav button{white-space:nowrap}main{padding:16px}}
+.filebtn{display:block;padding:6px 0;text-decoration:underline;cursor:pointer;color:var(--mute)}.who small{display:block;margin-bottom:6px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script type="text/babel" data-presets="react">
+const { useEffect, useMemo, useState, useCallback } = React
 
-DB = Path(__file__).with_name("budget.db")
-app = Flask(__name__, static_folder="static")
+// ---------- Local storage layer (replace this block to use another database later) ----------
+const KEY = 'budget-log-v1'
+const seed = () => {
+  const c = [[1,5000],[2,4500],[3,5500],[4,4000]].map(([w, a], i) => ({ id: i + 1, week_number: w, collection_date: `2026-10-0${w}`, description: `Week ${w} collection`, amount: a, person_responsible: null, is_sample: true }))
+  const e = [['John','Office','Bond Paper and Printing',350],['John','Transport','Transportation',200],['Mark','Transport','Transportation Fare',500],['James','Supplies','Cleaning Materials',750],['Peter','Food','Food and Refreshments',1000],['John','Office','Office Supplies',450],['Mark','Other','Miscellaneous',250]]
+    .map(([p, cat, n, a], i) => ({ id: 100 + i, expense_date: '2026-10-05', person_name: p, category: cat, expense_name: n, amount: a, is_sample: true }))
+  return { collections: c, expenses: e, next: 1000 }
+}
+const read = () => { try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.collections && d.expenses) return d } catch {} const d = seed(); write(d); return d }
+const write = d => { try { localStorage.setItem(KEY, JSON.stringify(d)) } catch { throw new Error('This browser blocked saving data.') } }
+const total = rows => rows.reduce((t, r) => t + Number(r.amount), 0)
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS entries (
-    id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind   TEXT NOT NULL CHECK (kind IN ('collection', 'expense')),
-    day    TEXT NOT NULL,                       -- YYYY-MM-DD
-    amount REAL NOT NULL CHECK (amount > 0),
-    note   TEXT NOT NULL DEFAULT ''
-);
-"""
+const table = (name, dateCol) => ({
+  async list() { return [...read()[name]].sort((a, b) => b[dateCol].localeCompare(a[dateCol]) || b.id - a.id) },
+  async save({ id, ...row }) {
+    const d = read(), list = d[name]
+    if (name === 'expenses') {
+      const others = total(list.filter(r => r.id !== id))
+      if (others + Number(row.amount) > total(d.collections)) throw new Error('Expense exceeds the remaining budget.')
+    }
+    if (id) d[name] = list.map(r => r.id === id ? { ...r, ...row } : r)
+    else d[name] = [...list, { ...row, id: ++d.next }]
+    write(d)
+  },
+  async remove(id) { const d = read(); d[name] = d[name].filter(r => r.id !== id); write(d) },
+})
+const db = { collections: table('collections', 'collection_date'), expenses: table('expenses', 'expense_date'),
+  exportAll: () => JSON.stringify(read(), null, 2),
+  importAll(text) { const d = JSON.parse(text); if (!Array.isArray(d.collections) || !Array.isArray(d.expenses)) throw new Error('This file is not a Budget Log backup.'); write({ next: 1000, ...d }) },
+  clearSample() { const d = read(); d.collections = d.collections.filter(r => !r.is_sample); d.expenses = d.expenses.filter(r => !r.is_sample); write(d) } }
 
-def db():
-    if "db" not in g:
-        g.db = sqlite3.connect(DB)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute(SCHEMA)
-    return g.db
+const peso = n => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(n || 0)
+const sum = total
+const today = () => new Date().toISOString().slice(0, 10)
 
-@app.teardown_appcontext
-def close_db(_):
-    conn = g.pop("db", None)
-    if conn:
-        conn.close()
+// ---------- Interface ----------
+// Reusable add / edit / delete table for both collections and expenses
+function Crud({ title, rows, fields, show, store, admin, notify, tone, available }) {
+  const blank = Object.fromEntries(fields.map(f => [f.k, f.def ?? '']))
+  const [form, setForm] = useState(null), [q, setQ] = useState('')
+  const shown = rows.filter(r => !q || JSON.stringify(r).toLowerCase().includes(q.toLowerCase()))
+  async function save(e) {
+    e.preventDefault()
+    const amt = Number(form.amount)
+    if (!(amt > 0)) return notify('Amount must be greater than zero.', true)
+    if (tone === 'out') { const old = rows.find(r => r.id === form.id)?.amount || 0; if (amt > available + Number(old)) return notify('This expense is more than the remaining budget.', true) }
+    try { await store.save({ ...form, amount: amt }); setForm(null); notify('Saved.') } catch (err) { notify(err.message, true) }
+  }
+  async function del(r) { if (confirm('Delete this record?')) try { await store.remove(r.id); notify('Deleted.') } catch (err) { notify(err.message, true) } }
+  return <section>
+    <div className="bar"><h2>{title} <small>({rows.length})</small></h2><input placeholder="Search…" value={q} onChange={e => setQ(e.target.value)} /><button className="primary" onClick={() => setForm({ ...blank })}>Add</button></div>
+    {form && <form className="card grid" onSubmit={save}>
+      {fields.map(f => <label key={f.k}>{f.label}<input type={f.type || 'text'} step={f.type === 'number' ? '0.01' : undefined} required={f.req} value={form[f.k] ?? ''} onChange={e => setForm({ ...form, [f.k]: e.target.value === '' && !f.req ? null : e.target.value })} /></label>)}
+      <div className="row"><button className="primary">Save</button><button type="button" className="link" onClick={() => setForm(null)}>Cancel</button></div>
+    </form>}
+    <div className="scroll"><table><thead><tr>{show.map(s => <th key={s.k}>{s.label}</th>)}<th /></tr></thead><tbody>
+      {shown.map(r => <tr key={r.id}>{show.map(s => <td key={s.k} className={s.k === 'amount' ? tone : ''}>{s.k === 'amount' ? peso(r[s.k]) : r[s.k]}</td>)}
+        <td className="act">{admin ? <><button className="link" onClick={() => setForm(r)}>Edit</button><button className="link out" onClick={() => del(r)}>Delete</button></> : null}</td></tr>)}
+      {!shown.length && <tr><td colSpan={show.length + 1} className="mute">Nothing here yet.</td></tr>}
+    </tbody></table></div>
+  </section>
+}
 
-def summary():
-    row = db().execute("""
-        SELECT COALESCE(SUM(CASE WHEN kind='collection' THEN amount END), 0) AS collected,
-               COALESCE(SUM(CASE WHEN kind='expense'    THEN amount END), 0) AS spent
-        FROM entries""").fetchone()
-    return {"collected": row["collected"], "spent": row["spent"],
-            "remaining": round(row["collected"] - row["spent"], 2)}
+function Dashboard({ cols, exps }) {
+  const c = sum(cols), s = sum(exps), rem = c - s
+  const recent = [...cols.map(x => ({ ...x, type: 'in', date: x.collection_date, label: x.description || `Week ${x.week_number}` })), ...exps.map(x => ({ ...x, type: 'out', date: x.expense_date, label: `${x.person_name}: ${x.expense_name}` }))].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8)
+  return <section>
+    {rem < 0 && <p className="warn">Expenses exceed the collected budget.</p>}
+    <div className="cards">
+      <div className="card"><span>Total collected</span><b className="in">{peso(c)}</b></div>
+      <div className="card"><span>Total expenses</span><b className="out">{peso(s)}</b></div>
+      <div className="card"><span>Remaining budget</span><b className={rem < 0 ? 'out' : ''}>{peso(rem)}</b></div>
+      <div className="card"><span>Latest collection</span><b>{peso(cols[0]?.amount)}</b></div>
+    </div>
+    <h2>Recent transactions</h2>
+    <div className="scroll"><table><tbody>{recent.map(r => <tr key={r.type + r.id}><td className="mute">{r.date}</td><td>{r.label}</td><td className={r.type}>{r.type === 'in' ? '+' : '−'}{peso(r.amount)}</td></tr>)}</tbody></table></div>
+  </section>
+}
 
-@app.get("/")
-def index():
-    return send_from_directory("static", "index.html")
+function Breakdown({ exps }) {
+  const groups = useMemo(() => { const m = {}; exps.forEach(e => (m[e.person_name.trim()] ||= []).push(e)); return Object.entries(m).map(([name, list]) => ({ name, list, total: sum(list) })).sort((a, b) => b.total - a.total) }, [exps])
+  return <section><h2>Expenses breakdown</h2>
+    {groups.map((g, i) => <details className="card" key={g.name}><summary><b>{g.name}</b> {i === 0 && <em>highest spender</em>}<span>{g.list.length} expenses</span><b className="out">{peso(g.total)}</b></summary>
+      <table><tbody>{g.list.map(e => <tr key={e.id}><td className="mute">{e.expense_date}</td><td>{e.expense_name}</td><td className="out">{peso(e.amount)}</td></tr>)}</tbody></table></details>)}
+    {!groups.length && <p className="mute">No expenses recorded.</p>}
+  </section>
+}
 
-@app.get("/api/entries")
-def list_entries():
-    rows = db().execute("SELECT * FROM entries ORDER BY day DESC, id DESC").fetchall()
-    return jsonify(entries=[dict(r) for r in rows], summary=summary())
+function History({ cols, exps }) {
+  const [type, setType] = useState(''), [q, setQ] = useState('')
+  const all = [...cols.map(x => ({ id: 'C' + x.id, type: 'in', date: x.collection_date, who: x.person_responsible || '', what: x.description || `Week ${x.week_number}`, amount: x.amount })), ...exps.map(x => ({ id: 'E' + x.id, type: 'out', date: x.expense_date, who: x.person_name, what: x.expense_name, amount: x.amount }))]
+    .filter(r => (!type || r.type === type) && (!q || (r.who + r.what).toLowerCase().includes(q.toLowerCase()))).sort((a, b) => b.date.localeCompare(a.date))
+  return <section><div className="bar"><h2>Transaction history</h2><input placeholder="Search…" value={q} onChange={e => setQ(e.target.value)} />
+    <select value={type} onChange={e => setType(e.target.value)}><option value="">All</option><option value="in">Collections</option><option value="out">Expenses</option></select></div>
+    <div className="scroll"><table><tbody>{all.map(r => <tr key={r.id}><td className="mute">{r.date}</td><td className="mute">{r.id}</td><td>{r.who}</td><td>{r.what}</td><td className={r.type}>{r.type === 'in' ? '+' : '−'}{peso(r.amount)}</td></tr>)}</tbody></table></div></section>
+}
 
-@app.post("/api/entries")
-def add_entry():
-    d = request.get_json(force=True)
-    kind, note = d.get("kind"), (d.get("note") or "").strip()
-    try:
-        amount = round(float(d.get("amount")), 2)
-        day = date.fromisoformat(d.get("day") or date.today().isoformat()).isoformat()
-    except (TypeError, ValueError):
-        return jsonify(error="Enter a valid amount and date."), 400
-    if kind not in ("collection", "expense") or amount <= 0:
-        return jsonify(error="Amount must be greater than zero."), 400
-    db().execute("INSERT INTO entries (kind, day, amount, note) VALUES (?,?,?,?)",
-                 (kind, day, amount, note))
-    db().commit()
-    return list_entries(), 201
+const COL_FIELDS = [{ k: 'week_number', label: 'Week no.', type: 'number', req: 1 }, { k: 'collection_date', label: 'Date', type: 'date', req: 1, def: today() }, { k: 'description', label: 'Remarks' }, { k: 'amount', label: 'Amount (₱)', type: 'number', req: 1 }, { k: 'person_responsible', label: 'Person (optional)' }]
+const EXP_FIELDS = [{ k: 'expense_date', label: 'Date', type: 'date', req: 1, def: today() }, { k: 'person_name', label: 'Person', req: 1 }, { k: 'category', label: 'Category' }, { k: 'expense_name', label: 'Expense', req: 1 }, { k: 'description', label: 'Details' }, { k: 'quantity', label: 'Quantity', type: 'number' }, { k: 'amount', label: 'Amount (₱)', type: 'number', req: 1 }, { k: 'receipt_reference', label: 'Receipt ref.' }, { k: 'remarks', label: 'Remarks' }]
+const PAGES = ['Dashboard', 'Weekly Collections', 'Expenses', 'Expenses Breakdown', 'Transaction History']
 
-@app.delete("/api/entries/<int:entry_id>")
-def delete_entry(entry_id):
-    db().execute("DELETE FROM entries WHERE id = ?", (entry_id,))
-    db().commit()
-    return list_entries()
 
-if __name__ == "__main__":
-    app.run(debug=True)
+function App() {
+  const [page, setPage] = useState(0), [cols, setCols] = useState([]), [exps, setExps] = useState([]), [toast, setToast] = useState(null)
+  const notify = (text, bad) => { setToast({ text, bad }); setTimeout(() => setToast(null), 3500) }
+  const load = useCallback(async () => { setCols(await db.collections.list()); setExps(await db.expenses.list()) }, [])
+  useEffect(() => { load(); window.addEventListener('storage', load); return () => window.removeEventListener('storage', load) }, [load])
+  const wrap = s => ({ save: async r => { await s.save(r); await load() }, remove: async id => { await s.remove(id); await load() } })
+  const available = sum(cols) - sum(exps)
+
+  function backup() {
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([db.exportAll()], { type: 'application/json' }))
+    a.download = `budget-log-${today()}.json`; a.click(); URL.revokeObjectURL(a.href)
+  }
+  function restore(e) {
+    const f = e.target.files[0]; if (!f) return
+    const r = new FileReader()
+    r.onload = async () => { try { db.importAll(r.result); await load(); notify('Backup restored.') } catch (err) { notify(err.message, true) } }
+    r.readAsText(f); e.target.value = ''
+  }
+  async function clearSample() { if (confirm('Remove all sample records?')) { db.clearSample(); await load(); notify('Sample data removed.') } }
+  const hasSample = [...cols, ...exps].some(r => r.is_sample)
+
+  return <div className="shell">
+    <nav><b>Budget Log</b>{PAGES.map((p, i) => <button key={p} className={i === page ? 'on' : ''} onClick={() => setPage(i)}>{p}</button>)}
+      <div className="who"><small>Saved in this browser only</small>
+        <button onClick={backup}>Download backup</button>
+        <label className="filebtn">Restore backup<input type="file" accept="application/json" onChange={restore} hidden /></label>
+        {hasSample && <button onClick={clearSample}>Remove sample data</button>}</div></nav>
+    <main>{[
+      <Dashboard cols={cols} exps={exps} />,
+      <Crud title="Weekly collections" rows={cols} fields={COL_FIELDS} show={[{ k: 'week_number', label: 'Week' }, { k: 'collection_date', label: 'Date' }, { k: 'description', label: 'Remarks' }, { k: 'amount', label: 'Amount' }]} store={wrap(db.collections)} admin={true} notify={notify} tone="in" />,
+      <Crud title="Expenses" rows={exps} fields={EXP_FIELDS} show={[{ k: 'expense_date', label: 'Date' }, { k: 'person_name', label: 'Person' }, { k: 'category', label: 'Category' }, { k: 'expense_name', label: 'Expense' }, { k: 'amount', label: 'Amount' }]} store={wrap(db.expenses)} admin={true} notify={notify} tone="out" available={available} />,
+      <Breakdown exps={exps} />, <History cols={cols} exps={exps} />][page]}</main>
+    {toast && <div className={'toast ' + (toast.bad ? 'bad' : '')}>{toast.text}</div>}
+  </div>
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />)
+</script>
+</body>
+</html>
