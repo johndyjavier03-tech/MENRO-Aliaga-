@@ -34,6 +34,7 @@ details summary{display:flex;gap:16px;align-items:baseline;cursor:pointer}detail
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:8px}.toast.bad{background:var(--out)}
 @media(max-width:700px){.shell{grid-template-columns:1fr}nav{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}nav>b,.who{display:none}nav button{white-space:nowrap}main{padding:16px}}
 .filebtn{display:block;padding:6px 0;text-decoration:underline;cursor:pointer;color:var(--mute)}.who small{display:block;margin-bottom:6px}
+.chk .row.add{margin-top:12px;align-items:center}.chk td.c,.chk th.c{text-align:center}.chk .sel{background:var(--bg)}.chk input[type=checkbox]{width:18px;height:18px;accent-color:var(--in);cursor:pointer}.chk p{margin:6px 0}
 </style>
 </head>
 <body>
@@ -50,10 +51,12 @@ const seed = () => {
   const c = [[1,5000],[2,4500],[3,5500],[4,4000]].map(([w, a], i) => ({ id: i + 1, week_number: w, collection_date: `2026-10-0${w}`, description: `Week ${w} collection`, amount: a, person_responsible: null, is_sample: true }))
   const e = [['John','Office','Bond Paper and Printing',350],['John','Transport','Transportation',200],['Mark','Transport','Transportation Fare',500],['James','Supplies','Cleaning Materials',750],['Peter','Food','Food and Refreshments',1000],['John','Office','Office Supplies',450],['Mark','Other','Miscellaneous',250]]
     .map(([p, cat, n, a], i) => ({ id: 100 + i, expense_date: '2026-10-05', person_name: p, category: cat, expense_name: n, amount: a, is_sample: true }))
-  return { collections: c, expenses: e, next: 1000 }
+  return norm({ collections: c, expenses: e, next: 1000 })
 }
-const read = () => { try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.collections && d.expenses) return d } catch {} const d = seed(); write(d); return d }
+const read = () => { try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.collections && d.expenses) return norm(d) } catch {} const d = seed(); write(d); return d }
 const write = d => { try { localStorage.setItem(KEY, JSON.stringify(d)) } catch { throw new Error('This browser blocked saving data.') } }
+const DEFAULT_MEMBERS = ['Nella','Mila','Daniella','Derick','Adriane','Mj','Andrew','Jm','Jarred','Charles','Vince']
+const norm = d => { d.members ||= DEFAULT_MEMBERS.map((n, i) => ({ id: 500 + i, name: n })); d.payments ||= {}; d.weeks ||= 4; return d }
 const total = rows => rows.reduce((t, r) => t + Number(r.amount), 0)
 
 const table = (name, dateCol) => ({
@@ -71,8 +74,13 @@ const table = (name, dateCol) => ({
   async remove(id) { const d = read(); d[name] = d[name].filter(r => r.id !== id); write(d) },
 })
 const db = { collections: table('collections', 'collection_date'), expenses: table('expenses', 'expense_date'),
+  pay: () => { const d = read(); return { members: d.members, payments: d.payments, weeks: d.weeks } },
+  addMember(name) { name = name.trim(); if (!name) throw new Error('Enter a name.'); const d = read(); if (d.members.some(m => m.name.toLowerCase() === name.toLowerCase())) throw new Error(`${name} is already on the list.`); d.members.push({ id: ++d.next, name }); write(d) },
+  removeMember(id) { const d = read(); d.members = d.members.filter(m => m.id !== id); Object.keys(d.payments).forEach(k => { if (k.startsWith(id + '|')) delete d.payments[k] }); write(d) },
+  setPaid(id, w, v) { const d = read(), k = id + '|' + w; if (v) d.payments[k] = true; else delete d.payments[k]; write(d) },
+  addWeek() { const d = read(); d.weeks++; write(d) },
   exportAll: () => JSON.stringify(read(), null, 2),
-  importAll(text) { const d = JSON.parse(text); if (!Array.isArray(d.collections) || !Array.isArray(d.expenses)) throw new Error('This file is not a Budget Log backup.'); write({ next: 1000, ...d }) },
+  importAll(text) { const d = JSON.parse(text); if (!Array.isArray(d.collections) || !Array.isArray(d.expenses)) throw new Error('This file is not a Budget Log backup.'); write(norm({ next: 1000, ...d })) },
   clearSample() { const d = read(); d.collections = d.collections.filter(r => !r.is_sample); d.expenses = d.expenses.filter(r => !r.is_sample); write(d) } }
 
 const peso = n => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(n || 0)
@@ -107,7 +115,32 @@ function Crud({ title, rows, fields, show, store, admin, notify, tone, available
   </section>
 }
 
-function Dashboard({ cols, exps }) {
+
+// Who has paid, week by week. Names can be added or removed; ticks are saved automatically.
+function Checklist({ pay, reload, notify }) {
+  const [name, setName] = useState(''), [sel, setSel] = useState(null)
+  const weeks = Array.from({ length: pay.weeks }, (_, i) => i + 1), w = sel ?? pay.weeks
+  const isPaid = (m, wk) => !!pay.payments[m + '|' + wk]
+  const unpaid = pay.members.filter(m => !isPaid(m.id, w))
+  const run = async fn => { try { fn(); await reload(); return true } catch (e) { notify(e.message, true); return false } }
+  return <div className="card chk">
+    <div className="bar"><h2>Payment checklist</h2>
+      <select aria-label="Week" value={w} onChange={e => setSel(Number(e.target.value))}>{weeks.map(x => <option key={x} value={x}>Week {x}</option>)}</select>
+      <button className="link" onClick={() => run(() => { db.addWeek(); setSel(pay.weeks + 1) })}>Add week</button></div>
+    <p><b className="in">{pay.members.length - unpaid.length} paid</b>, <b className="out">{unpaid.length} not yet paid</b> <span className="mute">for Week {w}</span></p>
+    <p className="mute">{unpaid.length ? 'Waiting on: ' + unpaid.map(m => m.name).join(', ') : 'Everyone has paid for this week.'}</p>
+    <div className="scroll"><table><thead><tr><th>Name</th>{weeks.map(x => <th key={x} className={'c' + (x === w ? ' sel' : '')}>W{x}</th>)}<th className="c">Paid</th><th /></tr></thead>
+      <tbody>{pay.members.map(m => <tr key={m.id}><td>{m.name}</td>
+        {weeks.map(x => <td key={x} className={'c' + (x === w ? ' sel' : '')}><input type="checkbox" aria-label={`${m.name}, week ${x}`} checked={isPaid(m.id, x)} onChange={e => run(() => db.setPaid(m.id, x, e.target.checked))} /></td>)}
+        <td className="c">{weeks.filter(x => isPaid(m.id, x)).length}/{pay.weeks}</td>
+        <td className="act"><button className="link out" onClick={() => confirm(`Remove ${m.name} from the list?`) && run(() => db.removeMember(m.id))}>Remove</button></td></tr>)}
+        {!pay.members.length && <tr><td colSpan={pay.weeks + 3} className="mute">No names yet. Add the first one below.</td></tr>}</tbody></table></div>
+    <form className="row add" onSubmit={async e => { e.preventDefault(); if (await run(() => db.addMember(name))) setName('') }}>
+      <input placeholder="Add a name" aria-label="New name" value={name} onChange={e => setName(e.target.value)} /><button className="primary">Add name</button></form>
+  </div>
+}
+
+function Dashboard({ cols, exps, extra }) {
   const c = sum(cols), s = sum(exps), rem = c - s
   const recent = [...cols.map(x => ({ ...x, type: 'in', date: x.collection_date, label: x.description || `Week ${x.week_number}` })), ...exps.map(x => ({ ...x, type: 'out', date: x.expense_date, label: `${x.person_name}: ${x.expense_name}` }))].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8)
   return <section>
@@ -118,6 +151,7 @@ function Dashboard({ cols, exps }) {
       <div className="card"><span>Remaining budget</span><b className={rem < 0 ? 'out' : ''}>{peso(rem)}</b></div>
       <div className="card"><span>Latest collection</span><b>{peso(cols[0]?.amount)}</b></div>
     </div>
+    {extra}
     <h2>Recent transactions</h2>
     <div className="scroll"><table><tbody>{recent.map(r => <tr key={r.type + r.id}><td className="mute">{r.date}</td><td>{r.label}</td><td className={r.type}>{r.type === 'in' ? '+' : '−'}{peso(r.amount)}</td></tr>)}</tbody></table></div>
   </section>
@@ -147,9 +181,9 @@ const PAGES = ['Dashboard', 'Weekly Collections', 'Expenses', 'Expenses Breakdow
 
 
 function App() {
-  const [page, setPage] = useState(0), [cols, setCols] = useState([]), [exps, setExps] = useState([]), [toast, setToast] = useState(null)
+  const [page, setPage] = useState(0), [cols, setCols] = useState([]), [exps, setExps] = useState([]), [pay, setPay] = useState(() => db.pay()), [toast, setToast] = useState(null)
   const notify = (text, bad) => { setToast({ text, bad }); setTimeout(() => setToast(null), 3500) }
-  const load = useCallback(async () => { setCols(await db.collections.list()); setExps(await db.expenses.list()) }, [])
+  const load = useCallback(async () => { setCols(await db.collections.list()); setExps(await db.expenses.list()); setPay(db.pay()) }, [])
   useEffect(() => { load(); window.addEventListener('storage', load); return () => window.removeEventListener('storage', load) }, [load])
   const wrap = s => ({ save: async r => { await s.save(r); await load() }, remove: async id => { await s.remove(id); await load() } })
   const available = sum(cols) - sum(exps)
@@ -175,7 +209,7 @@ function App() {
         <label className="filebtn">Restore backup<input type="file" accept="application/json" onChange={restore} hidden /></label>
         {hasSample && <button onClick={clearSample}>Remove sample data</button>}</div></nav>
     <main>{[
-      <Dashboard cols={cols} exps={exps} />,
+      <Dashboard cols={cols} exps={exps} extra={<Checklist pay={pay} reload={load} notify={notify} />} />,
       <Crud title="Weekly collections" rows={cols} fields={COL_FIELDS} show={[{ k: 'week_number', label: 'Week' }, { k: 'collection_date', label: 'Date' }, { k: 'description', label: 'Remarks' }, { k: 'amount', label: 'Amount' }]} store={wrap(db.collections)} admin={true} notify={notify} tone="in" />,
       <Crud title="Expenses" rows={exps} fields={EXP_FIELDS} show={[{ k: 'expense_date', label: 'Date' }, { k: 'person_name', label: 'Person' }, { k: 'category', label: 'Category' }, { k: 'expense_name', label: 'Expense' }, { k: 'amount', label: 'Amount' }]} store={wrap(db.expenses)} admin={true} notify={notify} tone="out" available={available} />,
       <Breakdown exps={exps} />, <History cols={cols} exps={exps} />][page]}</main>
