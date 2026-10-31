@@ -1,309 +1,73 @@
-"""
-Budget Log - weekly collections and expenses, stored in a local SQLite file.
-
-Run:   python app.py
-Open:  http://localhost:8000
-
-No packages to install (Python 3.8+ only). Data is saved in budget_log.db
-next to this file.
-"""
-import html
+"""Budget log: weekly collections + expenses, stored in a single SQLite file (budget.db)."""
 import sqlite3
-from datetime import date, datetime, timedelta
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from datetime import date
 from pathlib import Path
-from urllib.parse import parse_qs
+from flask import Flask, g, jsonify, request, send_from_directory
 
-DB_PATH = Path(__file__).with_name("budget_log.db")
-HOST, PORT = "localhost", 8000
-CURRENCY = "₱"
+DB = Path(__file__).with_name("budget.db")
+app = Flask(__name__, static_folder="static")
 
-
-# ---------- database ----------
-def db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    with db() as c:
-        c.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS collections (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                week_start   TEXT NOT NULL,
-                amount       REAL NOT NULL CHECK (amount > 0),
-                collected_by TEXT,
-                notes        TEXT
-            );
-            CREATE TABLE IF NOT EXISTS expenses (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                expense_date TEXT NOT NULL,
-                description  TEXT NOT NULL,
-                category     TEXT,
-                amount       REAL NOT NULL CHECK (amount > 0)
-            );
-            """
-        )
-
-
-# ---------- calculations ----------
-def monday_of(d: date) -> date:
-    return d - timedelta(days=d.weekday())
-
-
-def get_summary():
-    with db() as c:
-        collected = c.execute("SELECT COALESCE(SUM(amount),0) FROM collections").fetchone()[0]
-        spent = c.execute("SELECT COALESCE(SUM(amount),0) FROM expenses").fetchone()[0]
-    return {"collected": collected, "expenses": spent, "remaining": collected - spent}
-
-
-def get_category_totals():
-    with db() as c:
-        return c.execute(
-            """SELECT COALESCE(NULLIF(category,''),'Uncategorized') AS category,
-                      SUM(amount) AS total
-               FROM expenses GROUP BY 1 ORDER BY total DESC"""
-        ).fetchall()
-
-
-def add_collection(week, amount, by, notes):
-    week_start = monday_of(datetime.strptime(week, "%Y-%m-%d").date()).isoformat()
-    with db() as c:
-        c.execute(
-            "INSERT INTO collections (week_start, amount, collected_by, notes) VALUES (?,?,?,?)",
-            (week_start, amount, by, notes),
-        )
-
-
-def add_expense(when, description, category, amount):
-    datetime.strptime(when, "%Y-%m-%d")  # validates the date
-    with db() as c:
-        c.execute(
-            "INSERT INTO expenses (expense_date, description, category, amount) VALUES (?,?,?,?)",
-            (when, description, category, amount),
-        )
-
-
-def delete_row(table, row_id):
-    if table not in ("collections", "expenses"):
-        return
-    with db() as c:
-        c.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
-
-
-# ---------- page ----------
-def money(n):
-    return f"{CURRENCY}{n:,.2f}"
-
-
-def esc(s):
-    return html.escape(s or "")
-
-
-CSS = """
-:root{
-  --bg:#eef1ee; --panel:#fbfcfb; --ink:#1b2a2f; --muted:#5c6b70; --line:#d3dbd6;
-  --accent:#0e6e6d; --accent-ink:#ffffff; --bad:#a73a24; --bad-bg:#f8e6e1;
-}
-@media (prefers-color-scheme: dark){
-  :root{ --bg:#121a1c; --panel:#192326; --ink:#e4ece8; --muted:#93a3a0; --line:#2b3a3d;
-         --accent:#46b3ad; --accent-ink:#0b1415; --bad:#f0907a; --bad-bg:#3a1f1a; }
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:16px/1.5 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
-main{max-width:1040px;margin:0 auto;padding:32px 20px 64px}
-h1{font-size:1.5rem;margin:0 0 4px}
-h2{font-size:1.1rem;margin:0 0 12px}
-.sub{color:var(--muted);margin:0 0 24px}
-.num{font-variant-numeric:tabular-nums}
-
-/* The remaining budget is the one thing that gets visual weight. */
-.remaining{background:var(--accent);color:var(--accent-ink);border-radius:10px;
-  padding:24px 28px;margin-bottom:16px}
-.remaining.over{background:var(--bad);color:#fff}
-.remaining .label{opacity:.85}
-.remaining .big{font-size:clamp(2.2rem,6vw,3.4rem);font-weight:700;line-height:1.1}
-.remaining .eq{margin-top:10px;opacity:.9}
-.warn{background:var(--bad-bg);color:var(--bad);border-left:4px solid var(--bad);
-  padding:10px 14px;border-radius:4px;margin-bottom:16px}
-
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px}
-@media (max-width:760px){.grid{grid-template-columns:1fr}}
-section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px}
-
-form{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
-form .full{grid-column:1/-1}
-label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:2px}
-input{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;
-  background:var(--bg);color:var(--ink);font:inherit}
-input:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-button{font:inherit;cursor:pointer;border:0;border-radius:6px;padding:9px 14px}
-.primary{background:var(--accent);color:var(--accent-ink);font-weight:600}
-.link{background:none;color:var(--muted);padding:2px 6px;text-decoration:underline}
-.link:hover{color:var(--bad)}
-
-table{width:100%;border-collapse:collapse;font-size:.95rem}
-th{text-align:left;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line);padding:6px 4px}
-td{padding:7px 4px;border-bottom:1px solid var(--line);vertical-align:top}
-td.r,th.r{text-align:right}
-.empty{color:var(--muted);padding:8px 0}
-.small{color:var(--muted);font-size:.85rem}
-.cats{margin-top:24px}
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS entries (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind   TEXT NOT NULL CHECK (kind IN ('collection', 'expense')),
+    day    TEXT NOT NULL,                       -- YYYY-MM-DD
+    amount REAL NOT NULL CHECK (amount > 0),
+    note   TEXT NOT NULL DEFAULT ''
+);
 """
 
+def db():
+    if "db" not in g:
+        g.db = sqlite3.connect(DB)
+        g.db.row_factory = sqlite3.Row
+        g.db.execute(SCHEMA)
+    return g.db
 
-def render_page(error=""):
-    s = get_summary()
-    with db() as c:
-        cols = c.execute("SELECT * FROM collections ORDER BY week_start DESC, id DESC").fetchall()
-        exps = c.execute("SELECT * FROM expenses ORDER BY expense_date DESC, id DESC").fetchall()
-    cats = get_category_totals()
-    over = s["remaining"] < 0
-    today = date.today().isoformat()
+@app.teardown_appcontext
+def close_db(_):
+    conn = g.pop("db", None)
+    if conn:
+        conn.close()
 
-    col_rows = "".join(
-        f"""<tr><td>{esc(r['week_start'])}</td>
-        <td>{esc(r['collected_by'])}<div class="small">{esc(r['notes'])}</div></td>
-        <td class="r num">{money(r['amount'])}</td>
-        <td class="r"><form method="post" action="/delete" style="display:block;margin:0"
-            onsubmit="return confirm('Delete this collection?')">
-            <input type="hidden" name="table" value="collections">
-            <input type="hidden" name="id" value="{r['id']}">
-            <button class="link" aria-label="Delete collection">Delete</button></form></td></tr>"""
-        for r in cols
-    ) or '<tr><td colspan="4" class="empty">No collections yet. Add the first one above.</td></tr>'
+def summary():
+    row = db().execute("""
+        SELECT COALESCE(SUM(CASE WHEN kind='collection' THEN amount END), 0) AS collected,
+               COALESCE(SUM(CASE WHEN kind='expense'    THEN amount END), 0) AS spent
+        FROM entries""").fetchone()
+    return {"collected": row["collected"], "spent": row["spent"],
+            "remaining": round(row["collected"] - row["spent"], 2)}
 
-    exp_rows = "".join(
-        f"""<tr><td>{esc(r['expense_date'])}</td>
-        <td>{esc(r['description'])}<div class="small">{esc(r['category'])}</div></td>
-        <td class="r num">{money(r['amount'])}</td>
-        <td class="r"><form method="post" action="/delete" style="display:block;margin:0"
-            onsubmit="return confirm('Delete this expense?')">
-            <input type="hidden" name="table" value="expenses">
-            <input type="hidden" name="id" value="{r['id']}">
-            <button class="link" aria-label="Delete expense">Delete</button></form></td></tr>"""
-        for r in exps
-    ) or '<tr><td colspan="4" class="empty">No expenses yet. Add the first one above.</td></tr>'
+@app.get("/")
+def index():
+    return send_from_directory("static", "index.html")
 
-    cat_rows = "".join(
-        f"<tr><td>{esc(r['category'])}</td><td class='r num'>{money(r['total'])}</td></tr>" for r in cats
-    )
+@app.get("/api/entries")
+def list_entries():
+    rows = db().execute("SELECT * FROM entries ORDER BY day DESC, id DESC").fetchall()
+    return jsonify(entries=[dict(r) for r in rows], summary=summary())
 
-    banner = f'<div class="warn" role="alert">{esc(error)}</div>' if error else ""
-    over_note = (
-        '<div class="warn" role="alert">Expenses are higher than the money collected.</div>'
-        if over else ""
-    )
+@app.post("/api/entries")
+def add_entry():
+    d = request.get_json(force=True)
+    kind, note = d.get("kind"), (d.get("note") or "").strip()
+    try:
+        amount = round(float(d.get("amount")), 2)
+        day = date.fromisoformat(d.get("day") or date.today().isoformat()).isoformat()
+    except (TypeError, ValueError):
+        return jsonify(error="Enter a valid amount and date."), 400
+    if kind not in ("collection", "expense") or amount <= 0:
+        return jsonify(error="Amount must be greater than zero."), 400
+    db().execute("INSERT INTO entries (kind, day, amount, note) VALUES (?,?,?,?)",
+                 (kind, day, amount, note))
+    db().commit()
+    return list_entries(), 201
 
-    return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Budget Log</title><style>{CSS}</style></head>
-<body><main>
-<h1>Budget Log</h1>
-<p class="sub">Weekly collections and expenses, saved on this computer.</p>
-{banner}
-<div class="remaining {'over' if over else ''}">
-  <div class="label">Remaining budget</div>
-  <div class="big num">{money(s['remaining'])}</div>
-  <div class="eq num">{money(s['collected'])} collected &minus; {money(s['expenses'])} spent</div>
-</div>
-{over_note}
-
-<div class="grid">
-<section>
-  <h2>Money collected</h2>
-  <form method="post" action="/collection">
-    <div><label for="week">Date in the week</label>
-      <input id="week" type="date" name="week" value="{today}" required></div>
-    <div><label for="camt">Amount ({CURRENCY})</label>
-      <input id="camt" type="number" name="amount" step="0.01" min="0.01" required></div>
-    <div><label for="by">Collected by</label><input id="by" name="by" maxlength="100"></div>
-    <div><label for="cnotes">Notes</label><input id="cnotes" name="notes" maxlength="255"></div>
-    <div class="full"><button class="primary">Add collection</button></div>
-  </form>
-  <table><thead><tr><th>Week of (Mon)</th><th>Details</th><th class="r">Amount</th><th></th></tr></thead>
-  <tbody>{col_rows}</tbody></table>
-</section>
-
-<section>
-  <h2>Expenses</h2>
-  <form method="post" action="/expense">
-    <div><label for="edate">Date</label>
-      <input id="edate" type="date" name="date" value="{today}" required></div>
-    <div><label for="eamt">Amount ({CURRENCY})</label>
-      <input id="eamt" type="number" name="amount" step="0.01" min="0.01" required></div>
-    <div><label for="edesc">What it was for</label>
-      <input id="edesc" name="description" maxlength="255" required></div>
-    <div><label for="ecat">Category</label>
-      <input id="ecat" name="category" maxlength="50" placeholder="Supplies, food, transport"></div>
-    <div class="full"><button class="primary">Add expense</button></div>
-  </form>
-  <table><thead><tr><th>Date</th><th>Details</th><th class="r">Amount</th><th></th></tr></thead>
-  <tbody>{exp_rows}</tbody></table>
-</section>
-</div>
-
-<section class="cats">
-  <h2>Spending by category</h2>
-  <table><tbody>{cat_rows or '<tr><td class="empty">Nothing spent yet.</td></tr>'}</tbody></table>
-</section>
-</main></body></html>"""
-
-
-# ---------- server ----------
-class Handler(BaseHTTPRequestHandler):
-    def _send(self, body, status=200, location=None):
-        data = body.encode("utf-8")
-        self.send_response(status)
-        if location:
-            self.send_header("Location", location)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def do_GET(self):
-        if self.path.split("?")[0] == "/":
-            self._send(render_page())
-        else:
-            self._send("Not found", 404)
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        form = {k: v[0].strip() for k, v in parse_qs(self.rfile.read(length).decode()).items()}
-        try:
-            if self.path == "/collection":
-                add_collection(form["week"], _amount(form["amount"]),
-                               form.get("by", ""), form.get("notes", ""))
-            elif self.path == "/expense":
-                add_expense(form["date"], form["description"],
-                            form.get("category", ""), _amount(form["amount"]))
-            elif self.path == "/delete":
-                delete_row(form["table"], int(form["id"]))
-            else:
-                return self._send("Not found", 404)
-        except (KeyError, ValueError):
-            return self._send(render_page("That entry could not be saved. "
-                                          "Check the date and enter an amount above zero."), 400)
-        self._send("", 303, location="/")
-
-    def log_message(self, fmt, *args):  # keep the console quiet
-        pass
-
-
-def _amount(text):
-    value = round(float(text), 2)
-    if value <= 0:
-        raise ValueError("amount must be positive")
-    return value
-
+@app.delete("/api/entries/<int:entry_id>")
+def delete_entry(entry_id):
+    db().execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+    db().commit()
+    return list_entries()
 
 if __name__ == "__main__":
-    init_db()
-    print(f"Budget Log running at http://{HOST}:{PORT}  (Ctrl+C to stop)")
-    HTTPServer((HOST, PORT), Handler).serve_forever()
+    app.run(debug=True)
