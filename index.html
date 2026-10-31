@@ -149,7 +149,25 @@ const db = { collections: table('collections', 'collection_date', syncChecklist)
     const wsS = make(S, [], false); wsS['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 16 }]
     setF(wsS, F); money.forEach(a => { if (wsS[a]) wsS[a].z = PESO })
 
+    // Names Summary: one row per person with what they paid each week, weeks missed and what they spent
+    const key = n => String(n ?? '').trim().toLowerCase(), who = new Map()
+    const touch = n => { if (key(n) && !who.has(key(n))) who.set(key(n), String(n).trim()) }
+    d.members.forEach(m => touch(m.name)); cols.forEach(r => touch(r.person_responsible)); exps.forEach(r => touch(r.person_name))
+    const N = [['Name', ...weeks.map(w => 'Week ' + w), 'Total collected (₱)', 'Weeks paid', 'Not yet paid for', 'Total expenses (₱)']]
+    for (const [k, name] of who) {
+      const m = d.members.find(x => key(x.name) === k)
+      N.push([name, ...weeks.map(w => total(cols.filter(r => key(r.person_responsible) === k && Number(r.week_number) === w))),
+        total(cols.filter(r => key(r.person_responsible) === k)), m ? weeks.filter(w => isPaid(m, w)).length : 0,
+        m ? weeks.filter(w => !isPaid(m, w)).map(w => 'Week ' + w).join(', ') : '', total(exps.filter(r => key(r.person_name) === k))])
+    }
+    const nm = weeks.length, last = nm + 4, moneyCols = [...weeks.map((_, i) => i + 1), nm + 1, last]
+    N.push(['All names', ...Array(last).fill('')])
+    const wsN = make(N, moneyCols); const nFirst = 2, nLast = N.length - 1
+    wsN['!autofilter'].ref = X.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: nLast - 1, c: last } })   // filter the people, not the total row
+    setF(wsN, moneyCols.map(c => { const L = X.utils.encode_col(c); return [`${L}${N.length}`, `SUM(${L}${nFirst}:${L}${nLast})`, N.slice(1, -1).reduce((t, r) => t + Number(r[c]), 0), PESO] }))
+
     X.utils.book_append_sheet(wb, wsS, 'Summary')
+    X.utils.book_append_sheet(wb, wsN, 'Names Summary')
     X.utils.book_append_sheet(wb, wsC, 'Collections')
     X.utils.book_append_sheet(wb, wsE, 'Expenses')
     X.utils.book_append_sheet(wb, wsP, 'By Person')
